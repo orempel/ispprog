@@ -1,3 +1,18 @@
+/*
+ * C based avr910 / avr109 ISP Adapter
+ *
+ * (c) 05/2006 by Olaf Rempel
+ * <razzor at kopf minus tisch dot de>
+ *
+ * using ATmega16 @7.3728MHz:
+ * PB1 = /Reset (to target)
+ * PB3 = /LED
+ * PB5 = MOSI (to target)
+ * PB6 = MISO (to target)
+ * PB7 = SCK  (to target)
+ * PD3 = reset-in
+ *
+ */
 #include <avr/io.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,15 +123,15 @@ void led_mode(uint8_t mode)
 /* Control reset and SPI lines */
 void set_reset(uint8_t mode)
 {
-	// set reset high, make SCK & MOSI inputs
+	// make RESET, SCK and MOSI inputs
 	if (mode) {
+		DDRB &= ~((1<<PORTB7) | (1<<PORTB5) | (1<<PORTB1));
 		PORTB |= (1<<PORTB1);
-		DDRB &= ~((1<<PORTB7) | (1<<PORTB5));
 
-	// set reset low, make SCK & MOSI outputs
+	// make RESET, SCK & MOSI outputs, set RESET low
 	} else {
+		DDRB |= ((1<<PORTB7) | (1<<PORTB5) | (1<<PORTB1));
 		PORTB &= ~(1<<PORTB1);
-		DDRB |= ((1<<PORTB7) | (1<<PORTB5));
 	}
 
 	// wait 50ms
