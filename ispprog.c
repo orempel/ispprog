@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <avr/interrupt.h>
 
 #define F_CPU		7372800
 #define BAUDRATE	115200
@@ -13,6 +14,8 @@
 
 #define LED_OFF		0x00
 #define LED_ON		0x01
+#define LED_FAST	0x02
+#define LED_SLOW	0x03
 
 struct {
 	uint8_t id;			// device id
@@ -33,23 +36,33 @@ uint8_t lastcmd = 0, lastval = 0, pollcode = 0xFF;
 
 uint8_t page_buf[256];
 
+ISR(SIG_INPUT_CAPTURE1)
+{
+	// toggle LED
+	PORTB ^= (1<<PORTB3);
+}
+
+/* Send one byte to PC */
 void ser_send(uint8_t data)
 {
 	loop_until_bit_is_set(UCSRA, UDRIE);
 	UDR = data;
 }
 
+/* Receive one byte from PC */
 uint8_t ser_recv(void)
 {
 	loop_until_bit_is_set(UCSRA, RXC);
 	return UDR;
 }
 
+/* Check if receiver ready */
 uint8_t ser_recv_ready(void)
 {
 	return bit_is_set(UCSRA, RXC);
 }
 
+/* Send one byte to target, and return received one */
 uint8_t spi_rxtx(uint8_t val)
 {
 	SPDR = val;
@@ -57,6 +70,7 @@ uint8_t spi_rxtx(uint8_t val)
 	return SPDR;
 }
 
+/* Set LED mode */
 void led_mode(uint8_t mode)
 {
 	static uint8_t oldmode = LED_OFF;
@@ -65,14 +79,33 @@ void led_mode(uint8_t mode)
 		return;
 
 	} else if (mode == LED_ON) {
+		TCCR1B = 0x00;
 		PORTB &= ~(1<<PORTB3);
 
 	} else if (mode == LED_OFF) {
+		TCCR1B = 0x00;
 		PORTB |= (1<<PORTB3);
+
+	} else if (mode == LED_FAST) {
+		// 100ms reload
+		ICR1H = 0x2D;
+		ICR1L = 0x00;
+
+		// timer1 prescaler 64, CTC mode via Input Capture
+		TCCR1B = (1<<WGM13) | (1<<WGM12) | (1<<CS11) | (1<<CS10);
+
+	} else if (mode == LED_SLOW) {
+		// 250ms reload
+		ICR1H = 0x70;
+		ICR1L = 0x80;
+
+		// timer1 prescaler 64, CTC mode via Input Capture
+		TCCR1B = (1<<WGM13) | (1<<WGM12) | (1<<CS11) | (1<<CS10);
 	}
 	oldmode = mode;
 }
 
+/* Control reset and SPI lines */
 void set_reset(uint8_t mode)
 {
 	// set reset high, make SCK & MOSI inputs
@@ -86,10 +119,15 @@ void set_reset(uint8_t mode)
 		DDRB |= ((1<<PORTB7) | (1<<PORTB5));
 	}
 
+	// wait 50ms
 	_delay_ms(25);
 	_delay_ms(25);
 }
 
+/*
+ * writes a byte to target flash/eeprom
+ * remeber the values for polling
+ */
 void mem_write(uint8_t cmd, uint16_t addr, uint8_t val)
 {
 	spi_rxtx(cmd);
@@ -102,6 +140,7 @@ void mem_write(uint8_t cmd, uint16_t addr, uint8_t val)
 	lastval = val;
 }
 
+/* read a byte from target flash/eeprom */
 uint8_t mem_read(uint8_t cmd, uint16_t addr)
 {
 	spi_rxtx(cmd);
@@ -110,6 +149,7 @@ uint8_t mem_read(uint8_t cmd, uint16_t addr)
 	return spi_rxtx(0x00);
 }
 
+/* wait until byte/page is written to target memory */
 void poll(void)
 {
 	uint8_t cmd, val, poll = 0xFF;
@@ -131,6 +171,7 @@ void poll(void)
 		cmd = (lastcmd & 0x08) | 0x20;
 	}
 
+	/* read until we get correct value */
 	do {
 		val = mem_read(cmd, lastaddr);
 	} while ((val != lastval) && poll--);
@@ -153,15 +194,21 @@ int main(void)
 	UCSRB = (1<<TXEN) | (1<<RXEN);
 	UCSRC = (1<<URSEL) | (1<<UCSZ1) | (1<<UCSZ0);
 
-	// SPI enabled, Master mode, F_OSC/2
+	// SPI enabled, Master mode, F_OSC/4
 	SPCR = (1<<SPE) | (1<<MSTR);
+
+	// enable timer1 input capture interrupt (CTC hit)
+	TIMSK = (1<<TICIE1);
+	sei();
 
 	// disable reset
 	set_reset(1);
 
 	while (1) {
 		uint8_t pulse = 0;
+
 		while (!ser_recv_ready()) {
+			// reset the target
 			if (PIND & (1<<PIND3)) {
 				if (!pulse) {
 					led_mode(LED_ON);
@@ -178,7 +225,7 @@ int main(void)
 
 		switch (ser_recv()) {
 		// Enter programming mode
-		case 'P': {				// done
+		case 'P': {
 			uint8_t sync, count = 0x20;
 			led_mode(LED_ON);
 			do {
@@ -197,21 +244,23 @@ int main(void)
 		}
 
 		// Autoincrement address
-		case 'a':				// done
+		case 'a':
 			ser_send('Y');
 			break;
 
 		// Set address
-		case 'A':				// done
+		case 'A':
 			addr = (ser_recv() << 8);
 			addr |= ser_recv();
 			ser_send('\r');
 			break;
 
 		// Write program memory, low byte
-		case 'c':				// done
+		case 'c':
+			led_mode(LED_FAST);
 			mem_write(0x40, addr, ser_recv());
 
+			// poll on byte addressed targets
 			if (!pagemask)
 				poll();
 
@@ -219,9 +268,11 @@ int main(void)
 			break;
 
 		// Write program memory, high byte
-		case 'C':				// done
+		case 'C':
+			led_mode(LED_FAST);
 			mem_write(0x48, addr, ser_recv());
 
+			// poll on byte addressed targets
 			if (!pagemask)
 				poll();
 
@@ -230,10 +281,9 @@ int main(void)
 			break;
 
 		// Issue Page Write
-		case 'm':				// done
+		case 'm':
+			led_mode(LED_FAST);
 			spi_rxtx(0x4C);
-//			spi_rxtx(addr >> 8);
-//			spi_rxtx(addr & 0xFF);
 			spi_rxtx(lastaddr >> 8);
 			spi_rxtx(lastaddr & 0xFF);
 			spi_rxtx(0x00);
@@ -244,26 +294,29 @@ int main(void)
 			break;
 
 		// Read Lock Bits
-		case 'r':				// done
+		case 'r':
 			ser_send(mem_read(0x58, 0x0000));
 			ser_send('\r');
 			break;
 
 		// Read program memory
-		case 'R':				// done
+		case 'R':
+			led_mode(LED_SLOW);
 			ser_send(mem_read(0x28, addr));
 			ser_send(mem_read(0x20, addr));
 			addr++;
 			break;
 
 		// Read data memory
-		case 'd':				// done
+		case 'd':
+			led_mode(LED_SLOW);
 			ser_send(mem_read(0xA0, addr));
 			addr++;
 			break;
 
 		// Write data memory
-		case 'D':				// done
+		case 'D':
+			led_mode(LED_FAST);
 			mem_write(0xC0, addr, ser_recv());
 			poll();
 
@@ -272,7 +325,7 @@ int main(void)
 			break;
 
 		// Chip erase
-		case 'e':				// done
+		case 'e':
 			spi_rxtx(0xAC);
 			spi_rxtx(0x80);
 			spi_rxtx(0x00);
@@ -283,16 +336,14 @@ int main(void)
 			break;
 
 		// Write lock bits
+		// TODO: not implemented
 		case 'l':
 			ser_recv();
-
-			// TODO: implement?
-
 			ser_send('\r');
 			break;
 
 		// Read fuse bits
-		case 'F':				// done
+		case 'F':
 			spi_rxtx(0x50);
 			spi_rxtx(0x00);
 			spi_rxtx(0x00);
@@ -300,7 +351,7 @@ int main(void)
 			break;
 
 		// Return High Fusebits
-		case 'N':				// done
+		case 'N':
 			spi_rxtx(0x58);
 			spi_rxtx(0x08);
 			spi_rxtx(0x00);
@@ -308,7 +359,7 @@ int main(void)
 			break;
 
 		// Return extendet Fusebits
-		case 'Q':				// done
+		case 'Q':
 			spi_rxtx(0x50);
 			spi_rxtx(0x08);
 			spi_rxtx(0x00);
@@ -316,17 +367,17 @@ int main(void)
 			break;
 
 		// Leave programming mode
-		case 'L':				// done
+		case 'L':
 
 		// Exit
-		case 'E':				// done
+		case 'E':
 			set_reset(1);
 			led_mode(LED_OFF);
 			ser_send('\r');
 			break;
 
 		// Select device type
-		case 'T': {				// done
+		case 'T': {
 			uint8_t val, i = 0;
 			val = ser_recv();
 
@@ -345,7 +396,7 @@ int main(void)
 		}
 
 		// Read signature bytes
-		case 's': {				// done
+		case 's': {
 			uint8_t i = 2;
 			do {
 				spi_rxtx(0x30);
@@ -357,7 +408,7 @@ int main(void)
 		}
 
 		// Return supported device codes
-		case 't': {				// done
+		case 't': {
 			uint8_t val, i = 0;
 			do {
 				val = devices[i++].id;
@@ -367,7 +418,7 @@ int main(void)
 		}
 
 		// Return software identifier
-		case 'S':				// done
+		case 'S':
 			ser_send('A');
 			ser_send('V');
 			ser_send('R');
@@ -378,45 +429,47 @@ int main(void)
 			break;
 
 		// Return software version
-		case 'V':				// done
+		case 'V':
 			ser_send('3');
 			ser_send('8');
 			break;
 
 		// Return hardware version
-		case 'v':				// done
+		case 'v':
 			ser_send('1');
 			ser_send('2');
 			break;
 
 		// Return programmer type
-		case 'p':				// done
+		case 'p':
 			ser_send('S');
 			break;
 
 		// Set LED
-		case 'x':				// done
+		case 'x':
 			ser_recv();
 			led_mode(LED_ON);
 			break;
 
 		// Clear LED
-		case 'y':				// done
+		case 'y':
 			ser_recv();
 			led_mode(LED_OFF);
 			break;
 
 		// Report Block write Mode
-		case 'b':				// done
+		case 'b':
 			ser_send('Y');
 			ser_send(sizeof(page_buf) >> 8);
 			ser_send(sizeof(page_buf) & 0xFF);
 			break;
 
 		// Block Write
-		case 'B': {				// done
+		case 'B': {
 			uint16_t size, i;
 			uint8_t type;
+
+			led_mode(LED_FAST);
 
 			size = ser_recv() << 8;
 			size |= ser_recv();
@@ -432,6 +485,7 @@ int main(void)
 
 					addr++;
 
+					// page write on page-boundry
 					if ((addr & pagemask) == 0x00) {
 						spi_rxtx(0x4C);
 						spi_rxtx(lastaddr >> 8);
@@ -444,12 +498,12 @@ int main(void)
 
 				// last page
 				if (size != sizeof(page_buf)) {
-						spi_rxtx(0x4C);
-						spi_rxtx(lastaddr >> 8);
-						spi_rxtx(lastaddr & 0xFF);
-						spi_rxtx(0x00);
+					spi_rxtx(0x4C);
+					spi_rxtx(lastaddr >> 8);
+					spi_rxtx(lastaddr & 0xFF);
+					spi_rxtx(0x00);
 
-						poll();
+					poll();
 				}
 
 			} else if (type == 'E') {
@@ -464,9 +518,11 @@ int main(void)
 		}
 
 		// Block Read
-		case 'g': {				// done
+		case 'g': {
 			uint16_t size, i;
 			uint8_t type;
+
+			led_mode(LED_SLOW);
 
 			size = ser_recv() << 8;
 			size |= ser_recv();
@@ -489,14 +545,14 @@ int main(void)
 		}
 
 		// Write fuse bits
+		// TODO: implement
 		case 'f':
 			ser_recv();
-			// TODO: implement?
 			ser_send('\r');
 			break;
 
 		// Universial command
-		case ':': {				// done
+		case ':': {
 			uint8_t val[3];
 			val[0] = ser_recv();
 			val[1] = ser_recv();
@@ -505,13 +561,14 @@ int main(void)
 			spi_rxtx(val[0]);
 			spi_rxtx(val[1]);
 			ser_send(spi_rxtx(val[2]));
+
 			_delay_ms(25);
 			ser_send('\r');
 			break;
 		}
 
 		// New universal command
-		case '.': {				// done
+		case '.': {
 			uint8_t val[4];
 			val[0] = ser_recv();
 			val[1] = ser_recv();
@@ -522,11 +579,13 @@ int main(void)
 			spi_rxtx(val[1]);
 			spi_rxtx(val[2]);
 			ser_send(spi_rxtx(val[3]));
+
 			_delay_ms(25);
 			ser_send('\r');
 			break;
 		}
 
+		// ESC
 		case 0x1B:
 			break;
 
@@ -535,6 +594,5 @@ int main(void)
 			break;
 		}
 	}
-
 	return 0;
 }
