@@ -51,7 +51,7 @@ uint8_t lastcmd = 0, lastval = 0, pollcode = 0xFF;
 
 uint8_t page_buf[256];
 
-ISR(SIG_INPUT_CAPTURE1)
+ISR(SIG_OUTPUT_COMPARE1A)
 {
 	// toggle LED
 	PORTB ^= (1<<PORTB3);
@@ -103,19 +103,17 @@ void led_mode(uint8_t mode)
 
 	} else if (mode == LED_FAST) {
 		// 100ms reload
-		ICR1H = 0x2D;
-		ICR1L = 0x00;
+		OCR1A = 0x2D00;
 
-		// timer1 prescaler 64, CTC mode via Input Capture
-		TCCR1B = (1<<WGM13) | (1<<WGM12) | (1<<CS11) | (1<<CS10);
+		// timer1 prescaler 64, CTC mode via OutputCompare A
+		TCCR1B = (1<<WGM12) | (1<<CS11) | (1<<CS10);
 
 	} else if (mode == LED_SLOW) {
 		// 250ms reload
-		ICR1H = 0x70;
-		ICR1L = 0x80;
+		OCR1A = 0x7080;
 
-		// timer1 prescaler 64, CTC mode via Input Capture
-		TCCR1B = (1<<WGM13) | (1<<WGM12) | (1<<CS11) | (1<<CS10);
+		// timer1 prescaler 64, CTC mode via OutputCompare A
+		TCCR1B = (1<<WGM12) | (1<<CS11) | (1<<CS10);
 	}
 	oldmode = mode;
 }
@@ -212,8 +210,8 @@ int main(void)
 	// SPI enabled, Master mode, F_OSC/4
 	SPCR = (1<<SPE) | (1<<MSTR);
 
-	// enable timer1 input capture interrupt (CTC hit)
-	TIMSK = (1<<TICIE1);
+	// enable timer1 OutputCompare A interrupt (CTC hit)
+	TIMSK = (1<<OCIE1A);
 	sei();
 
 	// disable reset

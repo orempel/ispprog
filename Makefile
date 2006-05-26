@@ -69,4 +69,4 @@ esrec: $(PRG)_eeprom.srec
 
 install: text
 #	uisp -dprog=stk200 --erase --upload if=$(PRG).srec --verify
-	avrdude -p m16 -c butterfly -b 115200 -U flash:w:$(PRG).srec
+	avrdude -p m16 -c butterfly -b 19200 -U flash:w:$(PRG).srec
