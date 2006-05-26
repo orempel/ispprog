@@ -351,11 +351,17 @@ int main(void)
 			break;
 
 		// Write lock bits
-		// TODO: not implemented
-		case 'l':
-			ser_recv();
+		case 'l': {
+			uint8_t val = ser_recv();
+			spi_rxtx(0xAC);
+			spi_rxtx(0xE0);
+			spi_rxtx(0x00);
+			spi_rxtx(val);
+
+			_delay_ms(25);
 			ser_send('\r');
 			break;
+		}
 
 		// Read fuse bits
 		case 'F':
@@ -560,11 +566,17 @@ int main(void)
 		}
 
 		// Write fuse bits
-		// TODO: implement
-		case 'f':
-			ser_recv();
+		case 'f': {
+			uint8_t val = ser_recv();
+			spi_rxtx(0xAC);
+			spi_rxtx(0xA0);
+			spi_rxtx(0x00);
+			spi_rxtx(val);
+
+			_delay_ms(25);
 			ser_send('\r');
 			break;
+		}
 
 		// Universial command
 		case ':': {
