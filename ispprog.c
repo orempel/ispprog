@@ -39,7 +39,8 @@ struct {
 
 } devices[] = {
 
-	{ 0x20, 0x00, 0x7F },		// at90s2313 (no paging, reads 0x7F back)
+//	{ 0x20, 0x00, 0x7F },		// at90s2313 (no paging, reads 0x7F back)
+	{ 0x20, 0x0F, 0xFF },		// tiny24 (16 words/page)
 	{ 0x38, 0x00, 0x7F },		// at90s8515 (no paging, reads 0x7F back)
 	{ 0x43, 0x7F, 0xFF },		// mega128 (128 words/page)
 	{ 0x72,	0x3F, 0xFF },		// mega32 (64 words/page)
@@ -209,8 +210,9 @@ int main(void)
 	UCSRB = (1<<TXEN) | (1<<RXEN);
 	UCSRC = (1<<URSEL) | (1<<UCSZ1) | (1<<UCSZ0);
 
-	// SPI enabled, Master mode, F_OSC/4
+	// SPI enabled, Master mode, F_OSC /4 (F_OSC /128)
 	SPCR = (1<<SPE) | (1<<MSTR);
+//	SPCR = (1<<SPE) | (1<<MSTR) | (1<<SPR1) | (1<<SPR0);
 
 	// enable timer1 OutputCompare A interrupt (CTC hit)
 	TIMSK = (1<<OCIE1A);
