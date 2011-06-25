@@ -48,4 +48,4 @@ bin:  $(PRG).bin
 
 install: text
 #	uisp -dprog=stk200 --erase --upload if=$(PRG).hex --verify
-	avrdude -p m16 -c butterfly -b 19200 -U flash:w:$(PRG).hex
+	avrdude -p m16 -c butterfly -b 19200 -P /dev/ttyUSB0 -U flash:w:$(PRG).hex
