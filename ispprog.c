@@ -19,9 +19,11 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 #include <avr/io.h>
+#include <avr/eeprom.h>
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <string.h>
+#include <util/crc16.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*x))
 
@@ -99,9 +101,6 @@ static struct _device devices[] PROGMEM = {
 	{ { 0x1E, 0x97, 0x02 }, 0x43, 0x7F, POLL_FF },				/* mega128 */
 };
 
-/* sorted devcodes from devices[], terminated with 0x00 */
-static uint8_t devcodes[] PROGMEM = { 0x13, 0x20, 0x38, 0x41, 0x43, 0x45, 0x5E, 0x72, 0x74, 0x76, 0x00 };
-
 #define EV_NONE			0
 #define EV_STATE_ENTER		1
 #define EV_BUTTON_PRESSED	2
@@ -115,6 +114,7 @@ static uint8_t devcodes[] PROGMEM = { 0x13, 0x20, 0x38, 0x41, 0x43, 0x45, 0x5E, 
 #define STATE_SPEED2		4
 #define STATE_SPEED3		5
 #define STATE_SPEED4		6
+#define STATE_NVRAM_STORE	7	/* start nvram_write (internal state) */
 
 #define LED_OFF			0x00
 #define LED_SLOW		0x20
@@ -164,6 +164,76 @@ static uint8_t devcodes[] PROGMEM = { 0x13, 0x20, 0x38, 0x41, 0x43, 0x45, 0x5E, 
 #define CMD_WRITE_FUSE_H_2	0xA8 /* not used */
 #define CMD_WRITE_FUSE_E_1	0xAC /* not used */
 #define CMD_WRITE_FUSE_E_2	0xA4 /* not used */
+
+struct _nvdata {
+	uint8_t nvram_size;	/* first */
+	uint8_t spi_mode;
+	uint16_t nvram_crc;	/* last */
+};
+
+static uint8_t nvram_write_pos;
+static struct _nvdata nvram_data;
+static struct _nvdata nvram_eeprom EEMEM;
+static struct _nvdata nvram_defaults PROGMEM = { .spi_mode = SPI_MODE4 };
+
+/* create crc and store nvram data to eeprom */
+static void nvram_start_write(void)
+{
+	uint8_t i;
+	uint16_t crc = 0x0000;
+	uint8_t *tmp = (uint8_t *)&nvram_data;
+
+	nvram_data.nvram_size = sizeof(struct _nvdata);
+
+	for (i = 0; i < sizeof(struct _nvdata) -2; i++) {
+		crc = _crc_ccitt_update(crc, *tmp++);
+	}
+
+	nvram_data.nvram_crc = crc;
+	nvram_write_pos   = 0;
+
+	EEARL = nvram_write_pos;
+	EEARH = 0x00;
+	EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
+	EECR |= (1<<EEMWE);
+	EECR |= (1<<EEWE);
+	EECR |= (1<<EERIE);
+}
+
+/* store nvram data to eeprom */
+ISR(EE_RDY_vect) {
+	if (nvram_write_pos < sizeof(struct _nvdata)) {
+		EEARL = nvram_write_pos;
+		EEARH = 0x00;
+		EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
+		EECR |= (1<<EEMWE);
+		EECR |= (1<<EEWE);
+		EECR |= (1<<EERIE);
+
+	} else {
+		EECR &= ~(1<<EERIE);
+	}
+}
+
+/* read nvram from eeprom and check crc */
+static void nvram_read(void)
+{
+	uint8_t i;
+	uint16_t crc = 0x0000;
+	uint8_t *tmp = (uint8_t *)&nvram_data;
+
+	eeprom_read_block(&nvram_data, &nvram_eeprom, sizeof(struct _nvdata));
+
+	for (i = 0; i < sizeof(struct _nvdata); i++) {
+		crc = _crc_ccitt_update(crc, *tmp++);
+	}
+
+	/* if nvram content is invalid, overwrite with defaults */
+	if ((nvram_data.nvram_size != sizeof(struct _nvdata)) || (crc != 0x0000)) {
+		memcpy_P(&nvram_data, &nvram_defaults, sizeof(struct _nvdata));
+		nvram_start_write();
+	}
+}
 
 static volatile uint8_t led_mode;
 
@@ -271,6 +341,7 @@ static void mem_pagewrite(uint16_t addr)
 	poll();
 }
 
+static void cmdloop(void) __attribute__ ((noreturn));
 static void cmdloop(void)
 {
 	static uint8_t page_buf[256];
@@ -301,14 +372,14 @@ static void cmdloop(void)
 			memset(&device, 0x00, sizeof(struct _device));
 
 			if (sync == CMD_PROG_ENABLE_2) {
-				uint8_t i, sig[3];
+				uint8_t i;
 
 				for (i = 0; i < 3; i++) {
-					sig[i] = mem_read(CMD_READ_SIG_1, (CMD_READ_SIG_2 << 8) | i);
+					device.sig[i] = mem_read(CMD_READ_SIG_1, (CMD_READ_SIG_2 << 8) | i);
 				}
 
 				for (i = 0; i < ARRAY_SIZE(devices); i++) {
-					if (memcmp_P(sig, devices[i].sig, sizeof(sig)) == 0) {
+					if (memcmp_P(device.sig, devices[i].sig, sizeof(device.sig)) == 0) {
 						memcpy_P(&device, &devices[i], sizeof(struct _device));
 						break;
 					}
@@ -463,10 +534,24 @@ static void cmdloop(void)
 
 		/* Return supported device codes */
 		case 't': {
-			uint8_t i;
-			for (i = 0; i < ARRAY_SIZE(devcodes); i++) {
-				ser_send(pgm_read_byte(&devcodes[i]));
+			uint8_t limit = 0x00;
+			while (1) {
+				uint8_t i;
+				uint8_t search = 0xFF;
+				for (i = 0; i < ARRAY_SIZE(devices); i++) {
+					uint8_t devcode = pgm_read_byte(&devices[i].devcode);
+					if ((devcode > limit) && (devcode < search)) {
+						search = devcode;
+					}
+				}
+
+				if (search == 0xFF)
+					break;
+
+				ser_send(search);
+				limit = search;
 			}
+			ser_send(0x00);
 			break;
 		}
 
@@ -644,7 +729,7 @@ static void cmdloop(void)
 	}
 }
 
-static uint16_t statemachine(uint8_t event)
+static uint16_t button_statemachine(uint8_t event)
 {
 	static uint8_t oldstate;
 	uint8_t state = oldstate;
@@ -721,7 +806,7 @@ static uint16_t statemachine(uint8_t event)
 					state = STATE_SPEED2;
 
 				} else if (event == EV_TIMEOUT) {
-					state = STATE_IDLE;
+					state = STATE_NVRAM_STORE;
 					SPCR = SPI_MODE1;
 				}
 				break;
@@ -735,7 +820,7 @@ static uint16_t statemachine(uint8_t event)
 					state = STATE_SPEED3;
 
 				} else if (event == EV_TIMEOUT) {
-					state = STATE_IDLE;
+					state = STATE_NVRAM_STORE;
 					SPCR = SPI_MODE2;
 				}
 				break;
@@ -749,7 +834,7 @@ static uint16_t statemachine(uint8_t event)
 					state = STATE_SPEED4;
 
 				} else if (event == EV_TIMEOUT) {
-					state = STATE_IDLE;
+					state = STATE_NVRAM_STORE;
 					SPCR = SPI_MODE3;
 				}
 				break;
@@ -763,7 +848,7 @@ static uint16_t statemachine(uint8_t event)
 					state = STATE_SPEED1;
 
 				} else if (event == EV_TIMEOUT) {
-					state = STATE_IDLE;
+					state = STATE_NVRAM_STORE;
 					SPCR = SPI_MODE4;
 				}
 				break;
@@ -771,6 +856,12 @@ static uint16_t statemachine(uint8_t event)
 			default:
 				state = STATE_IDLE;
 				break;
+		}
+
+		if (state == STATE_NVRAM_STORE) {
+			state = STATE_IDLE;
+			nvram_data.spi_mode = SPCR;
+			nvram_start_write();
 		}
 
 		if (event == EV_STATE_ENTER) {
@@ -813,7 +904,7 @@ ISR(TIMER0_OVF_vect)
 	}
 
 	if (event != EV_NONE) {
-		uint16_t new_timer = statemachine(event);
+		uint16_t new_timer = button_statemachine(event);
 		if (new_timer == 0xFFFF) {
 			timer = 0;
 
@@ -832,6 +923,7 @@ ISR(TIMER0_OVF_vect)
 	}
 }
 
+int main(void) __attribute__ ((noreturn));
 int main(void)
 {
 	/* ISP_RESET and ISP_LED are outputs, pullup SlaveSelect */
@@ -846,8 +938,11 @@ int main(void)
 	UCSRB = (1<<TXEN) | (1<<RXEN);
 	UCSRC = (1<<URSEL) | (1<<UCSZ1) | (1<<UCSZ0);
 
+	/* read stored parameters */
+	nvram_read();
+
 	/* enable SPI master mode */
-	SPCR = SPI_MODE4;
+	SPCR = nvram_data.spi_mode;
 
 	/* timer0, FCPU/1024, overflow interrupt */
 	TCCR0 = (1<<CS02) | (1<<CS00);
@@ -856,5 +951,4 @@ int main(void)
 	sei();
 
 	cmdloop();
-	return 0;
 }
