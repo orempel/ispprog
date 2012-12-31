@@ -26,7 +26,7 @@ $(PRG).elf: $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 clean:
-	rm -rf *.o *.lst *.map $(PRG).elf *.hex *.bin
+	rm -rf *.o $(PRG).lst $(PRG).map $(PRG).elf $(PRG).hex $(PRG).bin
 
 lst:  $(PRG).lst
 

@@ -47,6 +47,12 @@
 #include <util/delay.h>
 #define UART_CALC_BAUDRATE(baudRate) (((uint32_t)F_CPU) / (((uint32_t)baudRate)*16) -1)
 
+/*
+ * To select SPI SPEED press RESET_IN until LED starts blinking (about 5s)
+ * press RESET_IN to cycle through SPI speeds (LED frequency changes)
+ * after timout (about 5s) the LED turns off and the new SPI speed is set
+ */
+
 /* F_CPU /4 (1.8432MHz) */
 #define SPI_MODE4       ((1<<SPE) | (1<<MSTR))
 /* F_CPU /16 (460.8kHz) */
@@ -64,13 +70,13 @@
 struct _device {
     uint8_t sig[3];     /* device signature */
     uint8_t devcode;    /* avr910 device code */
-    uint16_t pagemask;  /* pagemask */
+    uint16_t pagemask;  /* pagemask (pagesize in words!) */
     uint16_t flags;     /* quirks for this device */
 };
 
 static struct _device device;
 
-static struct _device devices[] PROGMEM = {
+static const struct _device devices[] PROGMEM = {
     { { 0x1E, 0x90, 0x01 }, 0x13, 0x00, POLL_00 | POLL_FF },            /* at90s1200 */
 
     { { 0x1E, 0x91, 0x01 }, 0x20, 0x00, POLL_7F | POLL_80 | POLL_FF },  /* at90s2313 */
@@ -92,6 +98,7 @@ static struct _device devices[] PROGMEM = {
     { { 0x1E, 0x94, 0x06 }, 0xFF, 0x3F, POLL_FF },                      /* mega168 (no devcode) */
 
     { { 0x1E, 0x95, 0x02 }, 0x72, 0x3F, POLL_FF },                      /* mega32 */
+    { { 0x1E, 0x95, 0x87 }, 0xFF, 0x3F, POLL_FF },                      /* mega32u4 (no devcode) */
 
     { { 0x1E, 0x96, 0x02 }, 0x45, 0x7F, POLL_FF },                      /* mega64 */
     { { 0x1E, 0x96, 0x09 }, 0x74, 0x7F, POLL_FF },                      /* mega644 (mega16 devcode) */
@@ -174,7 +181,7 @@ struct _nvdata {
 static uint8_t nvram_write_pos;
 static struct _nvdata nvram_data;
 static struct _nvdata nvram_eeprom EEMEM;
-static struct _nvdata nvram_defaults PROGMEM = { .spi_mode = SPI_MODE4 };
+static const struct _nvdata nvram_defaults PROGMEM = { .spi_mode = SPI_MODE4 };
 
 /* create crc and store nvram data to eeprom */
 static void nvram_start_write(void)
@@ -182,6 +189,9 @@ static void nvram_start_write(void)
     uint8_t i;
     uint16_t crc = 0x0000;
     uint8_t *tmp = (uint8_t *)&nvram_data;
+
+    if (EECR & (1<<EEWE))
+        return;
 
     nvram_data.nvram_size = sizeof(struct _nvdata);
 
@@ -195,9 +205,11 @@ static void nvram_start_write(void)
     EEARL = nvram_write_pos;
     EEARH = 0x00;
     EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
+    cli();
     EECR |= (1<<EEMWE);
     EECR |= (1<<EEWE);
     EECR |= (1<<EERIE);
+    sei();
 }
 
 /* store nvram data to eeprom */
@@ -734,7 +746,7 @@ static uint16_t button_statemachine(uint8_t event)
 {
     static uint8_t oldstate;
     uint8_t state = oldstate;
-    uint16_t timer;
+    uint16_t timer = 0; /* no change */
 
     do {
         if (state != oldstate) {
