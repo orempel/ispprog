@@ -98,6 +98,7 @@ static const struct _device devices[] PROGMEM = {
     { { 0x1E, 0x94, 0x06 }, 0xFF, 0x3F, POLL_FF },                      /* mega168 (no devcode) */
 
     { { 0x1E, 0x95, 0x02 }, 0x72, 0x3F, POLL_FF },                      /* mega32 */
+    { { 0x1E, 0x95, 0x0F }, 0xFF, 0x3F, POLL_FF },                      /* mega328p (no devcode) */
     { { 0x1E, 0x95, 0x87 }, 0xFF, 0x3F, POLL_FF },                      /* mega32u4 (no devcode) */
 
     { { 0x1E, 0x96, 0x02 }, 0x45, 0x7F, POLL_FF },                      /* mega64 */
@@ -367,7 +368,7 @@ static void cmdloop(void)
         switch (ser_recv()) {
         /* Enter programming mode */
         case 'P': {
-            uint8_t sync, count = 0x20;
+            uint8_t sync, count = 0x20, retval = '!';
             led_mode = LED_ON;
             do {
                 set_reset(1);
@@ -394,12 +395,19 @@ static void cmdloop(void)
                 for (i = 0; i < ARRAY_SIZE(devices); i++) {
                     if (memcmp_P(device.sig, devices[i].sig, sizeof(device.sig)) == 0) {
                         memcpy_P(&device, &devices[i], sizeof(struct _device));
+                        retval = '\r';
                         break;
                     }
                 }
             }
 
-            ser_send('\r');
+            /* device not supported */
+            if (retval == '!') {
+                set_reset(1);
+                led_mode = LED_OFF;
+            }
+
+            ser_send(retval);
             break;
         }
 
