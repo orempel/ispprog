@@ -27,12 +27,13 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*x))
 
+/* *********************************************************************** */
+#if defined(CONFIG_ispprog)
 /*
  * using ATmega16 @7.3728MHz:
  * Fuse H: 0xDA (512 words bootloader, jtag disabled)
  * Fuse L: 0xFF (ext. Crystal)
  */
-
 #define F_CPU           7372800
 #define BAUDRATE        115200
 #define TIMER_RELOAD    (0xFF - 72)    /* 10ms @7.3728MHz */
@@ -43,6 +44,72 @@
 #define ISP_MISO        PORTB6        /* to target */
 #define ISP_SCK         PORTB7        /* to target */
 #define RESET_IN        PORTD3        /* high active */
+
+#define ISP_INACTIVE()  {   /* ISP_SCK, ISP_MOSI and ISP_RESET are inputs */ \
+                            DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
+                            PORTB |= (1<<ISP_RESET); \
+                        };
+
+#define ISP_ACTIVE()    {   /* ISP_SCK, ISP_MOSI and ISP_RESET are outputs, set ISP_RESET low */ \
+                            DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
+                            PORTB &= ~(1<<ISP_RESET); \
+                        };
+
+#define ISP_LED_ON()    { PORTB &= ~(1<<ISP_LED); };
+#define ISP_LED_OFF()   { PORTB |= (1<<ISP_LED); };
+#define ISP_CHECK()     (PIND & (1<<RESET_IN))
+
+#define GPIO_INIT()     {   /* ISP_RESET and ISP_LED are outputs, pullup SlaveSelect */ \
+                            PORTB = (1<<ISP_RESET) | (1<<ISP_LED) | (1<<PORTB4); \
+                            DDRB = (1<<ISP_RESET) | (1<<ISP_LED); \
+                        };
+
+/* *********************************************************************** */
+#elif defined(CONFIG_ispprog2)
+/*
+ * using ATmega328P @8MHz:
+ * Fuse E: 0xFA (2.7V BOD)
+ * Fuse H: 0xDC (512 words bootloader)
+ * Fuse L: 0xE2 (internal osc)
+ */
+#define F_CPU           8000000
+#define BAUDRATE        115200
+#define TIMER_RELOAD    (0xFF - 78)     /* 10ms @8MHz */
+
+/* trim internal oscillator to get "good" baudrate */
+#define OSCCAL_VALUE    0x80
+
+#define ISP_RESET       PORTB2          /* to target */
+#define ISP_LED         PORTB0          /* high active */
+#define ISP_MOSI        PORTB3          /* to target */
+#define ISP_MISO        PORTB4          /* to target */
+#define ISP_SCK         PORTB5          /* to target */
+#define RESET_IN        PORTB1          /* low active */
+
+#define ISP_INACTIVE()  {   /* ISP_SCK, ISP_MOSI and ISP_RESET are inputs */ \
+                            DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
+                            PORTB |= (1<<ISP_RESET); \
+                        };
+
+#define ISP_ACTIVE()    {   /* ISP_SCK, ISP_MOSI and ISP_RESET are outputs, set ISP_RESET low */ \
+                            DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
+                            PORTB &= ~(1<<ISP_RESET); \
+                        };
+
+#define ISP_LED_ON()    { PORTB |= (1<<ISP_LED); };
+#define ISP_LED_OFF()   { PORTB &= ~(1<<ISP_LED); };
+#define ISP_CHECK()     !(PINB & (1<<RESET_IN))
+
+#define GPIO_INIT()     {   /* ISP_RESET and ISP_LED are outputs, pullup RESET_IN and SlaveSelect */ \
+                            PORTB = (1<<ISP_RESET) | (1<<RESET_IN) | (1<<PORTB2); \
+                            DDRB = (1<<ISP_RESET) | (1<<ISP_LED); \
+                        };
+
+/* *********************************************************************** */
+#else
+#error "unknown CONFIG"
+#endif
+/* *********************************************************************** */
 
 #include <util/delay.h>
 #define UART_CALC_BAUDRATE(baudRate) (((uint32_t)F_CPU) / (((uint32_t)baudRate)*16) -1)
@@ -255,8 +322,13 @@ static void nvram_start_write(void)
     uint16_t crc = 0x0000;
     uint8_t *tmp = (uint8_t *)&nvram_data;
 
+#if defined(__AVR_ATmega16__)
     if (EECR & (1<<EEWE))
         return;
+#elif defined(__AVR_ATmega328P__)
+    if (EECR & (1<<EEPE))
+        return;
+#endif
 
     nvram_data.nvram_size = sizeof(struct _nvdata);
 
@@ -271,21 +343,35 @@ static void nvram_start_write(void)
     EEARH = 0x00;
     EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
     cli();
+#if defined(__AVR_ATmega16__)
     EECR |= (1<<EEMWE);
     EECR |= (1<<EEWE);
+#elif defined(__AVR_ATmega328P__)
+    EECR |= (1<<EEMPE);
+    EECR |= (1<<EEPE);
+#endif
     EECR |= (1<<EERIE);
     sei();
 }
 
 /* store nvram data to eeprom */
+#if defined(__AVR_ATmega16__)
 ISR(EE_RDY_vect)
+#elif defined(__AVR_ATmega328P__)
+ISR(EE_READY_vect)
+#endif
 {
     if (nvram_write_pos < sizeof(struct _nvdata)) {
         EEARL = nvram_write_pos;
         EEARH = 0x00;
         EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
+#if defined(__AVR_ATmega16__)
         EECR |= (1<<EEMWE);
         EECR |= (1<<EEWE);
+#elif defined(__AVR_ATmega328P__)
+        EECR |= (1<<EEMPE);
+        EECR |= (1<<EEPE);
+#endif
         EECR |= (1<<EERIE);
 
     } else {
@@ -313,7 +399,7 @@ static void nvram_read(void)
     }
 }
 
-static volatile uint8_t led_mode;
+static volatile uint8_t led_mode = LED_OFF;
 
 static uint8_t last_cmd;
 static uint8_t last_val;
@@ -322,15 +408,25 @@ static uint16_t last_addr;
 /* Send one byte to PC */
 static void ser_send(uint8_t data)
 {
-    loop_until_bit_is_set(UCSRA, UDRIE);
+#if defined(__AVR_ATmega16__)
+    loop_until_bit_is_set(UCSRA, UDRE);
     UDR = data;
+#elif defined(__AVR_ATmega328P__)
+    loop_until_bit_is_set(UCSR0A, UDRE0);
+    UDR0 = data;
+#endif
 }
 
 /* Receive one byte from PC */
 static uint8_t ser_recv(void)
 {
+#if defined(__AVR_ATmega16__)
     loop_until_bit_is_set(UCSRA, RXC);
     return UDR;
+#elif defined(__AVR_ATmega328P__)
+    loop_until_bit_is_set(UCSR0A, RXC0);
+    return UDR0;
+#endif
 }
 
 /* Send one byte to target, and return received one */
@@ -345,14 +441,9 @@ static uint8_t spi_rxtx(uint8_t val)
 static void set_reset(uint8_t mode)
 {
     if (mode) {
-        /* ISP_SCK, ISP_MOSI and ISP_RESET are inputs */
-        DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET));
-        PORTB |= (1<<ISP_RESET);
-
+        ISP_INACTIVE();
     } else {
-        /*ISP_SCK, ISP_MOSI and ISP_RESET are outputs, set ISP_RESET low */
-        DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET));
-        PORTB &= ~(1<<ISP_RESET);
+        ISP_ACTIVE();
     }
 }
 
@@ -967,7 +1058,7 @@ ISR(TIMER0_OVF_vect)
     TCNT0 = TIMER_RELOAD;
 
     static uint8_t prev_pressed;
-    if (PIND & (1<<RESET_IN)) {
+    if (ISP_CHECK()) {
         if (!prev_pressed) {
             event = EV_BUTTON_PRESSED;
             prev_pressed = 1;
@@ -1002,19 +1093,37 @@ ISR(TIMER0_OVF_vect)
     static uint8_t led_timer;
 
     if (led_mode & ((led_timer++ & 0xFF) | 0x80)) {
-        PORTB &= ~(1<<ISP_LED);
+        ISP_LED_ON();
     } else {
-        PORTB |= (1<<ISP_LED);
+        ISP_LED_OFF();
     }
 }
+
+#if defined(__AVR_ATmega328P__)
+/*
+ * For newer devices the watchdog timer remains active even after a
+ * system reset. So disable it as soon as possible.
+ * automagically called on startup
+ */
+void disable_wdt_timer(void) __attribute__((naked, section(".init3")));
+void disable_wdt_timer(void)
+{
+    MCUSR = 0;
+    WDTCSR = (1<<WDCE) | (1<<WDE);
+    WDTCSR = (0<<WDE);
+}
+#endif
 
 int main(void) __attribute__ ((noreturn));
 int main(void)
 {
-    /* ISP_RESET and ISP_LED are outputs, pullup SlaveSelect */
-    PORTB = (1<<ISP_RESET) | (1<<ISP_LED) | (1<<PORTB4);
-    DDRB = (1<<ISP_RESET) | (1<<ISP_LED);
+    GPIO_INIT();
 
+#if defined(OSCCAL_VALUE)
+    OSCCAL = OSCCAL_VALUE;
+#endif /* defined(OSCCAL_VALUE) */
+
+#if defined(__AVR_ATmega16__)
     /* Set baud rate */
     UBRRH = (UART_CALC_BAUDRATE(BAUDRATE)>>8) & 0xFF;
     UBRRL = (UART_CALC_BAUDRATE(BAUDRATE) & 0xFF);
@@ -1022,6 +1131,15 @@ int main(void)
     /* enable usart with 8n1 */
     UCSRB = (1<<TXEN) | (1<<RXEN);
     UCSRC = (1<<URSEL) | (1<<UCSZ1) | (1<<UCSZ0);
+#elif defined(__AVR_ATmega328P__)
+    /* Set baud rate */
+    UBRR0H = (UART_CALC_BAUDRATE(BAUDRATE)>>8) & 0xFF;
+    UBRR0L = (UART_CALC_BAUDRATE(BAUDRATE) & 0xFF);
+
+    /* enable usart with 8n1 */
+    UCSR0B = (1<<TXEN0) | (1<<RXEN0);
+    UCSR0C = (1<<UCSZ01) | (1<<UCSZ00);
+#endif
 
     /* read stored parameters */
     nvram_read();
@@ -1029,9 +1147,14 @@ int main(void)
     /* enable SPI master mode */
     SPCR = nvram_data.spi_mode;
 
+#if defined(__AVR_ATmega16__)
     /* timer0, FCPU/1024, overflow interrupt */
     TCCR0 = (1<<CS02) | (1<<CS00);
     TIMSK = (1<<TOIE0);
+#elif defined(__AVR_ATmega328P__)
+    TCCR0B = (1<<CS02) | (1<<CS00);
+    TIMSK0 = (1<<TOIE0);
+#endif
 
     sei();
 

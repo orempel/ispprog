@@ -7,24 +7,34 @@ SIZE	:= avr-size
 TARGET = ispprog
 SOURCE = $(wildcard *.c)
 
-# select MCU
-MCU = atmega16
+#CONFIG = ispprog
+CONFIG = ispprog2
 
 AVRDUDE_PROG := -c butterfly -b 19200 -P /dev/ttyUSB0
 #AVRDUDE_PROG := -c dragon_isp -P usb
 
 # ---------------------------------------------------------------------------
 
-ifeq ($(MCU), atmega16)
-# (ext. crystal)
+ifeq ($(CONFIG), ispprog)
+# (7.3728MHz ext. crystal)
 AVRDUDE_MCU=m16
 AVRDUDE_FUSES=lfuse:w:0xff:m hfuse:w:0xda:m
+
+MCU=atmega16
+endif
+
+ifeq ($(CONFIG), ispprog2)
+# (8MHz int. osc, 2.7V BOD)
+AVRDUDE_MCU=m328p -F
+AVRDUDE_FUSES=lfuse:w:0xe2:m hfuse:w:0xdc:m efuse:w:0x02:m
+
+MCU = atmega328p
 endif
 
 # ---------------------------------------------------------------------------
 
 CFLAGS = -pipe -g -Os -mmcu=$(MCU) -Wall -fdata-sections -ffunction-sections
-CFLAGS += -Wa,-adhlns=$(*F).lst
+CFLAGS += -Wa,-adhlns=$(*F).lst -DCONFIG_$(CONFIG)=1
 LDFLAGS = -Wl,-Map,$(@:.elf=.map),--cref,--relax,--gc-sections
 
 # ---------------------------------------------------------------------------
