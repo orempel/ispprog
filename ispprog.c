@@ -19,11 +19,9 @@
  *   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.             *
  ***************************************************************************/
 #include <avr/io.h>
-#include <avr/eeprom.h>
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <string.h>
-#include <util/crc16.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*x))
 
@@ -114,20 +112,20 @@
 #include <util/delay.h>
 #define UART_CALC_BAUDRATE(baudRate) (((uint32_t)F_CPU) / (((uint32_t)baudRate)*16) -1)
 
-/*
- * To select SPI SPEED press RESET_IN until LED starts blinking (about 5s)
- * press RESET_IN to cycle through SPI speeds (LED frequency changes)
- * after timout (about 5s) the LED turns off and the new SPI speed is set
- */
-
 /* F_CPU /4 (1.8432MHz) */
 #define SPI_MODE4       ((1<<SPE) | (1<<MSTR))
 /* F_CPU /16 (460.8kHz) */
-#define SPI_MODE3       ((1<<SPE) | (1<<MSTR) | (1<<SPR1))
+#define SPI_MODE3       ((1<<SPE) | (1<<MSTR)             | (1<<SPR0))
 /* F_CPU /64 (115.2kHz) */
-#define SPI_MODE2       ((1<<SPE) | (1<<MSTR)             | (1<<SPR0))
+#define SPI_MODE2       ((1<<SPE) | (1<<MSTR) | (1<<SPR1))
 /* F_CPU /128 (57.6kHz) */
 #define SPI_MODE1       ((1<<SPE) | (1<<MSTR) | (1<<SPR1) | (1<<SPR0))
+
+static const uint8_t spi_modes[4] = { SPI_MODE1, SPI_MODE2, SPI_MODE3, SPI_MODE4 };
+
+#define SPI_SPEED_PROBE 0xFF
+
+static uint8_t spi_speed = SPI_SPEED_PROBE;
 
 #define POLL_00         0x01    /* value 0x00 can not be polled from flash/eeprom */
 #define POLL_7F         0x02    /* value 0x7F can not be polled from flash/eeprom */
@@ -240,20 +238,19 @@ static const struct _device devices[] PROGMEM = {
 //  { { 0x1E, 0xA7, 0x01 }, 0xFF, ???, ??? },                           /* mega128rfa1 */
 };
 
-#define EV_NONE             0
-#define EV_STATE_ENTER      1
-#define EV_BUTTON_PRESSED   2
-#define EV_BUTTON_RELEASED  3
-#define EV_TIMEOUT          4
+#define EV_NONE                 0x00
+#define EV_STATE_ENTER          0x01
+#define EV_BUTTON_PRESSED       0x02
+#define EV_BUTTON_RELEASED      0x03
+#define EV_TIMEOUT              0x04
+#define EV_PROG_ENTER           0x11
+#define EV_PROG_LEAVE           0x12
 
-#define STATE_IDLE          0    /* nothing */
-#define STATE_PRESSED       1    /* reset_in pressed, generating 50ms isp_reset pulse */
-#define STATE_PRESSED2      2    /* reset_in still pressed, isp_reset pulse complete */
-#define STATE_SPEED1        3    /* spi speed setting 1 */
-#define STATE_SPEED2        4
-#define STATE_SPEED3        5
-#define STATE_SPEED4        6
-#define STATE_NVRAM_STORE   7    /* start nvram_write (internal state) */
+#define STATE_IDLE              0x00    /* nothing */
+#define STATE_RESET_SYNC        0x01
+#define STATE_RESET_RETRY       0x02
+#define STATE_RESET_PROGMODE    0x03
+
 
 #define LED_OFF                 0x00
 #define LED_SLOW                0x20
@@ -304,100 +301,6 @@ static const struct _device devices[] PROGMEM = {
 #define CMD_WRITE_FUSE_E_1      0xAC /* not used */
 #define CMD_WRITE_FUSE_E_2      0xA4 /* not used */
 
-struct _nvdata {
-    uint8_t nvram_size;    /* first */
-    uint8_t spi_mode;
-    uint16_t nvram_crc;    /* last */
-};
-
-static uint8_t nvram_write_pos;
-static struct _nvdata nvram_data;
-static struct _nvdata nvram_eeprom EEMEM;
-static const struct _nvdata nvram_defaults PROGMEM = { .spi_mode = SPI_MODE4 };
-
-/* create crc and store nvram data to eeprom */
-static void nvram_start_write(void)
-{
-    uint8_t i;
-    uint16_t crc = 0x0000;
-    uint8_t *tmp = (uint8_t *)&nvram_data;
-
-#if defined(__AVR_ATmega16__)
-    if (EECR & (1<<EEWE))
-        return;
-#elif defined(__AVR_ATmega328P__)
-    if (EECR & (1<<EEPE))
-        return;
-#endif
-
-    nvram_data.nvram_size = sizeof(struct _nvdata);
-
-    for (i = 0; i < sizeof(struct _nvdata) -2; i++) {
-        crc = _crc_ccitt_update(crc, *tmp++);
-    }
-
-    nvram_data.nvram_crc = crc;
-    nvram_write_pos = 0;
-
-    EEARL = nvram_write_pos;
-    EEARH = 0x00;
-    EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
-    cli();
-#if defined(__AVR_ATmega16__)
-    EECR |= (1<<EEMWE);
-    EECR |= (1<<EEWE);
-#elif defined(__AVR_ATmega328P__)
-    EECR |= (1<<EEMPE);
-    EECR |= (1<<EEPE);
-#endif
-    EECR |= (1<<EERIE);
-    sei();
-}
-
-/* store nvram data to eeprom */
-#if defined(__AVR_ATmega16__)
-ISR(EE_RDY_vect)
-#elif defined(__AVR_ATmega328P__)
-ISR(EE_READY_vect)
-#endif
-{
-    if (nvram_write_pos < sizeof(struct _nvdata)) {
-        EEARL = nvram_write_pos;
-        EEARH = 0x00;
-        EEDR  = ((uint8_t *)&nvram_data)[nvram_write_pos++];
-#if defined(__AVR_ATmega16__)
-        EECR |= (1<<EEMWE);
-        EECR |= (1<<EEWE);
-#elif defined(__AVR_ATmega328P__)
-        EECR |= (1<<EEMPE);
-        EECR |= (1<<EEPE);
-#endif
-        EECR |= (1<<EERIE);
-
-    } else {
-        EECR &= ~(1<<EERIE);
-    }
-}
-
-/* read nvram from eeprom and check crc */
-static void nvram_read(void)
-{
-    uint8_t i;
-    uint16_t crc = 0x0000;
-    uint8_t *tmp = (uint8_t *)&nvram_data;
-
-    eeprom_read_block(&nvram_data, &nvram_eeprom, sizeof(struct _nvdata));
-
-    for (i = 0; i < sizeof(struct _nvdata); i++) {
-        crc = _crc_ccitt_update(crc, *tmp++);
-    }
-
-    /* if nvram content is invalid, overwrite with defaults */
-    if ((nvram_data.nvram_size != sizeof(struct _nvdata)) || (crc != 0x0000)) {
-        memcpy_P(&nvram_data, &nvram_defaults, sizeof(struct _nvdata));
-        nvram_start_write();
-    }
-}
 
 static volatile uint8_t led_mode = LED_OFF;
 
@@ -510,59 +413,33 @@ static void mem_pagewrite(uint16_t addr)
     poll();
 }
 
+static void reset_statemachine(uint8_t event);
+static volatile uint16_t reset_timer = 0x0000;
+static volatile uint8_t reset_state;
+
 static void cmdloop(void) __attribute__ ((noreturn));
 static void cmdloop(void)
 {
     static uint8_t page_buf[256];
     uint16_t addr = 0;
 
-    /* disable ISP_RESET */
-    set_reset(1);
-
     while (1) {
         switch (ser_recv()) {
         /* Enter programming mode */
         case 'P': {
-            uint8_t sync, count = 0x20, retval = '!';
-            led_mode = LED_ON;
-            do {
-                set_reset(1);
-                _delay_ms(50);
-                set_reset(0);
-                _delay_ms(50);
+            reset_statemachine(EV_PROG_ENTER);
 
-                spi_rxtx(CMD_PROG_ENABLE_1);
-                spi_rxtx(CMD_PROG_ENABLE_2);
-                sync = spi_rxtx(0x00);
-                spi_rxtx(0x00);
+            while (1) {
+                if (reset_state == STATE_IDLE) {
+                    ser_send('!');
+                    break;
 
-            } while (sync != CMD_PROG_ENABLE_2 && count--);
-
-            memset(&device, 0x00, sizeof(struct _device));
-
-            if (sync == CMD_PROG_ENABLE_2) {
-                uint8_t i;
-
-                for (i = 0; i < 3; i++) {
-                    device.sig[i] = mem_read(CMD_READ_SIG_1, (CMD_READ_SIG_2 << 8) | i);
-                }
-
-                for (i = 0; i < ARRAY_SIZE(devices); i++) {
-                    if (memcmp_P(device.sig, devices[i].sig, sizeof(device.sig)) == 0) {
-                        memcpy_P(&device, &devices[i], sizeof(struct _device));
-                        retval = '\r';
-                        break;
-                    }
+                } else if (reset_state == STATE_RESET_PROGMODE) {
+                    /* device not supported */
+                    ser_send('\r');
+                    break;
                 }
             }
-
-            /* device not supported */
-            if (retval == '!') {
-                set_reset(1);
-                led_mode = LED_OFF;
-            }
-
-            ser_send(retval);
             break;
         }
 
@@ -687,8 +564,7 @@ static void cmdloop(void)
 
         /* Exit Bootloader */
         case 'E':
-            set_reset(1);
-            led_mode = LED_OFF;
+            reset_statemachine(EV_PROG_LEAVE);
             ser_send('\r');
             break;
 
@@ -905,127 +781,126 @@ static void cmdloop(void)
     }
 }
 
-static uint16_t button_statemachine(uint8_t event)
+static void reset_statemachine(uint8_t event)
 {
-    static uint8_t oldstate;
-    uint8_t state = oldstate;
-    uint16_t timer = 0; /* no change */
+    static uint8_t reset_retries;
+    static uint8_t reset_cause;
+
+    uint8_t state;
+    uint8_t oldstate;
+    uint16_t timer;
+
+    cli();
+    /* copy state, disable timer */
+    state = reset_state;
+    timer = reset_timer;
+    reset_timer = 0x0000;
+    sei();
 
     do {
-        if (state != oldstate) {
-            event = EV_STATE_ENTER;
-        }
+        oldstate = state;
 
         switch (state) {
             case STATE_IDLE:
                 if (event == EV_STATE_ENTER) {
                     led_mode = LED_OFF;
-                    timer = 0xFFFF; /* stop timer */
+                    timer = 0; /* stop timer */
 
-                } else if (event == EV_BUTTON_PRESSED) {
-                    state = STATE_PRESSED;
-                    set_reset(0);
+                    /* put device in RUN mode */
+                    set_reset(1);
+
+                } else if ((event == EV_BUTTON_PRESSED) || (event == EV_PROG_ENTER)) {
+                    memset(&device, 0x00, sizeof(struct _device));
+                    reset_retries = 5;
+                    reset_cause = event;
+
+                    /* probe SPI speed of device */
+                    if (spi_speed == SPI_SPEED_PROBE) {
+                        spi_speed = 3;
+                    }
+
+                    state = STATE_RESET_SYNC;
                 }
                 break;
 
-            case STATE_PRESSED:
+            case STATE_RESET_SYNC:
                 if (event == EV_STATE_ENTER) {
                     led_mode = LED_ON;
-                    timer = 5; /* timeout 50ms (== reset length) */
+                    timer = 5; /* timeout 50ms */
 
-                } else if (event == EV_BUTTON_RELEASED) {
-                    state = STATE_IDLE;
-                    set_reset(1);
+                    /* set SPI speed */
+                    SPCR = spi_modes[spi_speed];
 
-                } else if (event == EV_TIMEOUT) {
-                    state = STATE_PRESSED2;
-                    set_reset(1);
-                }
-                break;
-
-            case STATE_PRESSED2:
-                if (event == EV_STATE_ENTER) {
-                    led_mode = LED_OFF;
-                    timer = 500; /* timeout in 5s */
-
-                } else if (event == EV_BUTTON_RELEASED) {
-                    state = STATE_IDLE;
+                    /* put device in ISP mode */
+                    set_reset(0);
 
                 } else if (event == EV_TIMEOUT) {
-                    switch (SPCR) {
-                        case SPI_MODE1:
-                            state = STATE_SPEED1;
-                            break;
+                    uint8_t sync;
+                    spi_rxtx(CMD_PROG_ENABLE_1);
+                    spi_rxtx(CMD_PROG_ENABLE_2);
+                    sync = spi_rxtx(0x00);
+                    spi_rxtx(0x00);
 
-                        case SPI_MODE2:
-                            state = STATE_SPEED2;
-                            break;
+                    if (sync == CMD_PROG_ENABLE_2) {
+                        uint8_t i;
+                        uint8_t sig[3];
 
-                        case SPI_MODE3:
-                            state = STATE_SPEED3;
-                            break;
+                        for (i = 0; i < 3; i++) {
+                            sig[i] = mem_read(CMD_READ_SIG_1, (CMD_READ_SIG_2 << 8) | i);
+                        }
 
-                        default:
-                        case SPI_MODE4:
-                            state = STATE_SPEED4;
-                            break;
+                        for (i = 0; i < ARRAY_SIZE(devices); i++) {
+                            if (memcmp_P(sig, devices[i].sig, sizeof(device.sig)) == 0) {
+                                memcpy_P(&device, &devices[i], sizeof(struct _device));
+                                break;
+                            }
+                        }
+
+                        state = (reset_cause == EV_PROG_ENTER) ? STATE_RESET_PROGMODE
+                                                               : STATE_IDLE;
+
+                    } else {
+                        state = STATE_RESET_RETRY;
                     }
                 }
                 break;
 
-            case STATE_SPEED1:
+            case STATE_RESET_RETRY:
                 if (event == EV_STATE_ENTER) {
-                    led_mode = LED_SPEED1;
-                    timer = 500; /* timeout in 5s */
+                    led_mode = LED_OFF;
+                    timer = 5; /* timeout 50ms */
 
-                } else if (event == EV_BUTTON_PRESSED) {
-                    state = STATE_SPEED2;
+                    /* put device in RUN mode */
+                    set_reset(1);
 
                 } else if (event == EV_TIMEOUT) {
-                    state = STATE_NVRAM_STORE;
-                    SPCR = SPI_MODE1;
+                    reset_retries--;
+                    if (reset_retries > 0) {
+                        /* try lower frequency */
+                        if (spi_speed > 0) {
+                            spi_speed--;
+                        }
+
+                        state = STATE_RESET_SYNC;
+
+                    } else {
+                        /* got no sync, probe speed again next time */
+                        spi_speed = SPI_SPEED_PROBE;
+                        state = STATE_IDLE;
+                    }
                 }
                 break;
 
-            case STATE_SPEED2:
+            case STATE_RESET_PROGMODE:
                 if (event == EV_STATE_ENTER) {
-                    led_mode = LED_SPEED2;
-                    timer = 500; /* timeout in 5s */
+
+                } else if (event == EV_PROG_LEAVE) {
+                    /* was in prog mode (osc changed?), probe speed next time */
+                    spi_speed = SPI_SPEED_PROBE;
+                    state = STATE_IDLE;
 
                 } else if (event == EV_BUTTON_PRESSED) {
-                    state = STATE_SPEED3;
-
-                } else if (event == EV_TIMEOUT) {
-                    state = STATE_NVRAM_STORE;
-                    SPCR = SPI_MODE2;
-                }
-                break;
-
-            case STATE_SPEED3:
-                if (event == EV_STATE_ENTER) {
-                    led_mode = LED_SPEED3;
-                    timer = 500; /* timeout in 5s */
-
-                } else if (event == EV_BUTTON_PRESSED) {
-                    state = STATE_SPEED4;
-
-                } else if (event == EV_TIMEOUT) {
-                    state = STATE_NVRAM_STORE;
-                    SPCR = SPI_MODE3;
-                }
-                break;
-
-            case STATE_SPEED4:
-                if (event == EV_STATE_ENTER) {
-                    led_mode = LED_SPEED4;
-                    timer = 500; /* timeout in 5s */
-
-                } else if (event == EV_BUTTON_PRESSED) {
-                    state = STATE_SPEED1;
-
-                } else if (event == EV_TIMEOUT) {
-                    state = STATE_NVRAM_STORE;
-                    SPCR = SPI_MODE4;
+                    state = STATE_IDLE;
                 }
                 break;
 
@@ -1034,19 +909,16 @@ static uint16_t button_statemachine(uint8_t event)
                 break;
         }
 
-        if (state == STATE_NVRAM_STORE) {
-            state = STATE_IDLE;
-            nvram_data.spi_mode = SPCR;
-            nvram_start_write();
-        }
+        event = (oldstate != state) ? EV_STATE_ENTER
+                                    : EV_NONE;
 
-        if (event == EV_STATE_ENTER) {
-            oldstate = state;
-        }
+    } while (oldstate != state);
 
-    } while (state != oldstate);
-
-    return timer;
+    cli();
+    /* copy state back */
+    reset_timer = timer;
+    reset_state = state;
+    sei();
 }
 
 /* time keeping */
@@ -1071,22 +943,15 @@ ISR(TIMER0_OVF_vect)
         }
     }
 
-    static uint16_t timer;
-    if (timer) {
-        timer--;
-        if (timer == 0) {
+    if (reset_timer) {
+        reset_timer--;
+        if (reset_timer == 0) {
             event = EV_TIMEOUT;
         }
     }
 
     if (event != EV_NONE) {
-        uint16_t new_timer = button_statemachine(event);
-        if (new_timer == 0xFFFF) {
-            timer = 0;
-
-        } else if (new_timer > 0) {
-            timer = new_timer;
-        }
+        reset_statemachine(event);
     }
 
     /* update LED */
@@ -1141,11 +1006,8 @@ int main(void)
     UCSR0C = (1<<UCSZ01) | (1<<UCSZ00);
 #endif
 
-    /* read stored parameters */
-    nvram_read();
-
     /* enable SPI master mode */
-    SPCR = nvram_data.spi_mode;
+    SPCR = SPI_MODE4;
 
 #if defined(__AVR_ATmega16__)
     /* timer0, FCPU/1024, overflow interrupt */
@@ -1155,6 +1017,9 @@ int main(void)
     TCCR0B = (1<<CS02) | (1<<CS00);
     TIMSK0 = (1<<TOIE0);
 #endif
+
+    /* init statemachine */
+    reset_statemachine(EV_STATE_ENTER);
 
     sei();
 
