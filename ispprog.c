@@ -86,13 +86,13 @@
 #define ISP_SCK         PORTB5          /* to target */
 #define RESET_IN        PORTB1          /* low active */
 
-#define ISP_INACTIVE()  {   /* ISP_SCK, ISP_MOSI and ISP_RESET are inputs */ \
-                            DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
+#define ISP_INACTIVE()  {   /* ISP_SCK, ISP_MOSI are inputs, set ISP_RESET high */ \
+                            DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI)); \
                             PORTB |= (1<<ISP_RESET); \
                         };
 
 #define ISP_ACTIVE()    {   /* ISP_SCK, ISP_MOSI and ISP_RESET are outputs, set ISP_RESET low */ \
-                            DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
+                            DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI)); \
                             PORTB &= ~(1<<ISP_RESET); \
                         };
 
