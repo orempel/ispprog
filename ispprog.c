@@ -318,7 +318,8 @@ static void ser_send(uint8_t data)
     loop_until_bit_is_set(UCSR0A, UDRE0);
     UDR0 = data;
 #endif
-}
+} /* ser_send */
+
 
 /* Receive one byte from PC */
 static uint8_t ser_recv(void)
@@ -330,7 +331,7 @@ static uint8_t ser_recv(void)
     loop_until_bit_is_set(UCSR0A, RXC0);
     return UDR0;
 #endif
-}
+} /* ser_recv */
 
 /* Send one byte to target, and return received one */
 static uint8_t spi_rxtx(uint8_t val)
@@ -338,7 +339,8 @@ static uint8_t spi_rxtx(uint8_t val)
     SPDR = val;
     loop_until_bit_is_set(SPSR, SPIF);
     return SPDR;
-}
+} /* spi_rxtx */
+
 
 /* Control reset and SPI lines */
 static void set_reset(uint8_t mode)
@@ -348,7 +350,8 @@ static void set_reset(uint8_t mode)
     } else {
         ISP_ACTIVE();
     }
-}
+} /* set_reset */
+
 
 /* writes a byte to target flash/eeprom */
 static void mem_write(uint8_t cmd, uint16_t addr, uint8_t val)
@@ -362,7 +365,8 @@ static void mem_write(uint8_t cmd, uint16_t addr, uint8_t val)
     last_cmd = cmd;
     last_addr = addr;
     last_val = val;
-}
+} /* mem_write */
+
 
 /* read a byte from target flash/eeprom */
 static uint8_t mem_read(uint8_t cmd, uint16_t addr)
@@ -371,7 +375,8 @@ static uint8_t mem_read(uint8_t cmd, uint16_t addr)
     spi_rxtx(addr >> 8);
     spi_rxtx(addr & 0xFF);
     return spi_rxtx(0x00);
-}
+} /* mem_read */
+
 
 /* wait until byte/page is written to target memory */
 static void poll(void)
@@ -400,7 +405,7 @@ static void poll(void)
     do {
         val = mem_read(cmd, last_addr);
     } while ((val != last_val) && poll--);
-}
+} /* poll */
 
 
 static void mem_pagewrite(uint16_t addr)
@@ -411,11 +416,13 @@ static void mem_pagewrite(uint16_t addr)
     spi_rxtx(0x00);
 
     poll();
-}
+} /* mem_pagewrite */
+
 
 static void reset_statemachine(uint8_t event);
 static volatile uint16_t reset_timer = 0x0000;
 static volatile uint8_t reset_state;
+
 
 static void cmdloop(void) __attribute__ ((noreturn));
 static void cmdloop(void)
@@ -779,7 +786,8 @@ static void cmdloop(void)
             break;
         }
     }
-}
+} /* cmdloop */
+
 
 static void reset_statemachine(uint8_t event)
 {
@@ -919,7 +927,8 @@ static void reset_statemachine(uint8_t event)
     reset_timer = timer;
     reset_state = state;
     sei();
-}
+} /* reset_statemachine */
+
 
 /* time keeping */
 ISR(TIMER0_OVF_vect)
@@ -962,7 +971,7 @@ ISR(TIMER0_OVF_vect)
     } else {
         ISP_LED_OFF();
     }
-}
+} /* TIMER0_OVF_vect */
 
 #if defined(__AVR_ATmega328P__)
 /*
@@ -976,8 +985,9 @@ void disable_wdt_timer(void)
     MCUSR = 0;
     WDTCSR = (1<<WDCE) | (1<<WDE);
     WDTCSR = (0<<WDE);
-}
-#endif
+} /* disable_wdt_timer */
+#endif /* defined(__AVR_ATmega328P__) */
+
 
 int main(void) __attribute__ ((noreturn));
 int main(void)
@@ -1024,4 +1034,4 @@ int main(void)
     sei();
 
     cmdloop();
-}
+} /* main */
