@@ -98,9 +98,27 @@
 #define ISP_LED_OFF()   { PORTB &= ~(1<<ISP_LED); };
 #define ISP_CHECK()     !(PINB & (1<<RESET_IN))
 
+/* DL1414 display */
+#define DISP_WR         PORTC2          /* low active */
+#define DISP_A0         PORTC0
+#define DISP_A1         PORTC1
+#define DISP_D0         PORTC3
+#define DISP_D1         PORTD2
+#define DISP_D2         PORTD3
+#define DISP_D3         PORTD4
+#define DISP_D4         PORTD5
+#define DISP_D5         PORTD6
+#define DISP_D6         PORTD7
+
+
 #define GPIO_INIT()     {   /* ISP_RESET and ISP_LED are outputs, pullup RESET_IN and SlaveSelect */ \
                             PORTB = (1<<ISP_RESET) | (1<<RESET_IN) | (1<<PORTB2); \
                             DDRB = (1<<ISP_RESET) | (1<<ISP_LED); \
+                            \
+                            /* all DISP_* pins are outputs, DISP_WR is high */ \
+                            DDRC = (1<<DISP_WR) | (1<<DISP_A0) | (1<<DISP_A1) | (1<<DISP_D0); \
+                            PORTC = (1<<DISP_WR); \
+                            DDRD = 0xFC; \
                         };
 
 /* *********************************************************************** */
@@ -134,6 +152,7 @@ static uint8_t spi_speed = SPI_SPEED_PROBE;
 #define POLL_UNTESTED   0x80    /* device not tested */
 
 struct _device {
+    uint8_t name[12];
     uint8_t sig[3];     /* device signature */
     uint8_t devcode;    /* avr910 device code */
     uint16_t pagemask;  /* pagemask (pagesize in words!) */
@@ -143,100 +162,100 @@ struct _device {
 static struct _device device;
 
 static const struct _device devices[] PROGMEM = {
-    { { 0x1E, 0x90, 0x01 }, 0x13, 0x00, POLL_00 | POLL_FF },            /* at90s1200 */
-    { { 0x1E, 0x90, 0x05 }, 0x55, 0x00, POLL_UNTESTED },                /* tiny12 */
-    { { 0x1E, 0x90, 0x06 }, 0x56, 0x00, POLL_UNTESTED },                /* tiny15 */
-    { { 0x1E, 0x90, 0x07 }, 0xFF, 0x00, POLL_UNTESTED },                /* tiny13 */
+    { "at90s1200",  { 0x1E, 0x90, 0x01 }, 0x13, 0x00, POLL_00 | POLL_FF },
+    { "tiny12",     { 0x1E, 0x90, 0x05 }, 0x55, 0x00, POLL_UNTESTED },
+    { "tiny15",     { 0x1E, 0x90, 0x06 }, 0x56, 0x00, POLL_UNTESTED },
+    { "tiny13",     { 0x1E, 0x90, 0x07 }, 0xFF, 0x00, POLL_UNTESTED },
 
-    { { 0x1E, 0x91, 0x01 }, 0x20, 0x00, POLL_7F | POLL_80 | POLL_FF },  /* at90s2313 */
-    { { 0x1E, 0x91, 0x02 }, 0x48, 0x00, POLL_UNTESTED },                /* at90s2323 */
-    { { 0x1E, 0x91, 0x03 }, 0x4C, 0x00, POLL_UNTESTED },                /* at90s2343 */
-    { { 0x1E, 0x91, 0x05 }, 0x34, 0x00, POLL_UNTESTED },                /* at90s2333 */
-    { { 0x1E, 0x91, 0x08 }, 0x20, 0x0F, POLL_FF },                      /* tiny25 (at90s2313 devcode) */
-    { { 0x1E, 0x91, 0x09 }, 0x5E, 0x0F, POLL_FF },                      /* tiny26 */
-    { { 0x1E, 0x91, 0x0A }, 0x5E, 0x0F, POLL_FF },                      /* tiny2313 (tiny26 devcode) */
-    { { 0x1E, 0x91, 0x0B }, 0x20, 0x0F, POLL_FF },                      /* tiny24 (at90s2313 devcode) */
-    { { 0x1E, 0x91, 0x0C }, 0xFF, 0x0F, POLL_FF | POLL_UNTESTED },      /* tiny261a */
+    { "at90s2313",  { 0x1E, 0x91, 0x01 }, 0x20, 0x00, POLL_7F | POLL_80 | POLL_FF },
+    { "at90s2323",  { 0x1E, 0x91, 0x02 }, 0x48, 0x00, POLL_UNTESTED },
+    { "at90s2343",  { 0x1E, 0x91, 0x03 }, 0x4C, 0x00, POLL_UNTESTED },
+    { "at90s2333",  { 0x1E, 0x91, 0x05 }, 0x34, 0x00, POLL_UNTESTED },
+    { "tiny25",     { 0x1E, 0x91, 0x08 }, 0x20, 0x0F, POLL_FF },                        /* at90s2313 devcode */
+    { "tiny26",     { 0x1E, 0x91, 0x09 }, 0x5E, 0x0F, POLL_FF },
+    { "tiny2313",   { 0x1E, 0x91, 0x0A }, 0x5E, 0x0F, POLL_FF },                        /* tiny26 devcode */
+    { "tiny24",     { 0x1E, 0x91, 0x0B }, 0x20, 0x0F, POLL_FF },                        /* at90s2313 devcode */
+    { "tiny261a",   { 0x1E, 0x91, 0x0C }, 0xFF, 0x0F, POLL_FF | POLL_UNTESTED },
 
-    { { 0x1E, 0x92, 0x01 }, 0x28, 0x00, POLL_UNTESTED },                /* at90s4414 */
-    { { 0x1E, 0x92, 0x02 }, 0x6C, 0x00, POLL_UNTESTED },                /* at90s4434 */
-    { { 0x1E, 0x92, 0x03 }, 0x30, 0x00, POLL_UNTESTED },                /* at90s4433 */
-    { { 0x1E, 0x92, 0x05 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega48 */
-    { { 0x1E, 0x92, 0x06 }, 0x20, 0x1F, POLL_FF },                      /* tiny45 (at90s2313 devcode) */
-    { { 0x1E, 0x92, 0x07 }, 0x20, 0x1F, POLL_FF },                      /* tiny44 (at90s2313 devcode) */
-    { { 0x1E, 0x92, 0x08 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega461a */
-    { { 0x1E, 0x92, 0x0A }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega48pa */
-    { { 0x1E, 0x92, 0x0D }, 0x5E, 0x1F, POLL_FF | POLL_UNTESTED },      /* tiny4313 (tiny26 devcode) */
+    { "at90s4414",  { 0x1E, 0x92, 0x01 }, 0x28, 0x00, POLL_UNTESTED },
+    { "at90s4434",  { 0x1E, 0x92, 0x02 }, 0x6C, 0x00, POLL_UNTESTED },
+    { "at90s4433",  { 0x1E, 0x92, 0x03 }, 0x30, 0x00, POLL_UNTESTED },
+    { "mega48",     { 0x1E, 0x92, 0x05 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED},
+    { "tiny45",     { 0x1E, 0x92, 0x06 }, 0x20, 0x1F, POLL_FF },                        /* at90s2313 devcode */
+    { "tiny44",     { 0x1E, 0x92, 0x07 }, 0x20, 0x1F, POLL_FF },                        /* at90s2313 devcode */
+    { "mega461a",   { 0x1E, 0x92, 0x08 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "mega48pa",   { 0x1E, 0x92, 0x0A }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "tiny4313",   { 0x1E, 0x92, 0x0D }, 0x5E, 0x1F, POLL_FF | POLL_UNTESTED },        /* tiny26 devcode */
 
-    { { 0x1E, 0x93, 0x01 }, 0x38, 0x00, POLL_7F | POLL_80 | POLL_FF },  /* at90s8515 */
-    { { 0x1E, 0x93, 0x03 }, 0x68, 0x00, POLL_UNTESTED },                /* at90s8535 */
-    { { 0x1E, 0x93, 0x05 }, 0x65, 0x00, POLL_UNTESTED },                /* mega83 */
-    { { 0x1E, 0x93, 0x06 }, 0x3A, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega8515 */
-    { { 0x1E, 0x93, 0x07 }, 0x76, 0x1F, POLL_00 | POLL_FF },            /* mega8 */
-    { { 0x1E, 0x93, 0x08 }, 0x69, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega8535 */
-    { { 0x1E, 0x93, 0x0A }, 0xFF, 0x1F, POLL_FF },                      /* mega88 (no devcode) */
-    { { 0x1E, 0x93, 0x0B }, 0x20, 0x1F, POLL_FF },                      /* tiny85 (at90s2313 devcode) */
-    { { 0x1E, 0x93, 0x0C }, 0x20, 0x1F, POLL_FF },                      /* tiny84 (at90s2313 devcode) */
-    { { 0x1E, 0x93, 0x0D }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* tiny861a */
-    { { 0x1E, 0x93, 0x0F }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega88pa */
-    { { 0x1E, 0x93, 0x11 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* tiny88 */
-    { { 0x1E, 0x93, 0x81 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* at90pwm2/3 */
-    { { 0x1E, 0x93, 0x82 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* at90usb82 */
-    { { 0x1E, 0x93, 0x83 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* at90pwm2b/3b */
-    { { 0x1E, 0x93, 0x89 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },      /* mega8u2 */
+    { "at90s8515",  { 0x1E, 0x93, 0x01 }, 0x38, 0x00, POLL_7F | POLL_80 | POLL_FF },
+    { "at90s8535",  { 0x1E, 0x93, 0x03 }, 0x68, 0x00, POLL_UNTESTED },
+    { "mega83",     { 0x1E, 0x93, 0x05 }, 0x65, 0x00, POLL_UNTESTED },
+    { "mega8515",   { 0x1E, 0x93, 0x06 }, 0x3A, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "mega8",      { 0x1E, 0x93, 0x07 }, 0x76, 0x1F, POLL_00 | POLL_FF },
+    { "mega8535",   { 0x1E, 0x93, 0x08 }, 0x69, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "mega88",     { 0x1E, 0x93, 0x0A }, 0xFF, 0x1F, POLL_FF },
+    { "tiny85",     { 0x1E, 0x93, 0x0B }, 0x20, 0x1F, POLL_FF },                        /* at90s2313 devcode */
+    { "tiny84",     { 0x1E, 0x93, 0x0C }, 0x20, 0x1F, POLL_FF },                        /* at90s2313 devcode */
+    { "tiny861a",   { 0x1E, 0x93, 0x0D }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "mega88pa",   { 0x1E, 0x93, 0x0F }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "tiny88",     { 0x1E, 0x93, 0x11 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "at90pwm3",   { 0x1E, 0x93, 0x81 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },        /* same: at90pwm2 */
+    { "at90usb82",  { 0x1E, 0x93, 0x82 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
+    { "at90pwm3b",  { 0x1E, 0x93, 0x83 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },        /* same: at90pwm2b */
+    { "mega8u2",    { 0x1E, 0x93, 0x89 }, 0xFF, 0x1F, POLL_FF | POLL_UNTESTED },
 
-    { { 0x1E, 0x94, 0x01 }, 0x60, 0x00, POLL_UNTESTED },                /* mega161 */
-    { { 0x1E, 0x94, 0x02 }, 0x64, 0x00, POLL_UNTESTED },                /* mega163 */
-    { { 0x1E, 0x94, 0x03 }, 0x74, 0x3F, POLL_FF },                      /* mega16 */
-    { { 0x1E, 0x94, 0x04 }, 0x63, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega162 */
-    { { 0x1E, 0x94, 0x05 }, 0x78, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega169 */
-    { { 0x1E, 0x94, 0x06 }, 0xFF, 0x3F, POLL_FF },                      /* mega168 (no devcode) */
-    { { 0x1E, 0x94, 0x0A }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega164pa (mega16 devcode) */
-    { { 0x1E, 0x94, 0x0B }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega168pa */
-    { { 0x1E, 0x94, 0x0F }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega164a */
-    { { 0x1E, 0x94, 0x82 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* at90usb162 */
-    { { 0x1E, 0x94, 0x88 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega16u4 */
-    { { 0x1E, 0x94, 0x89 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega16u2 */
+    { "mega161",    { 0x1E, 0x94, 0x01 }, 0x60, 0x00, POLL_UNTESTED },
+    { "mega163",    { 0x1E, 0x94, 0x02 }, 0x64, 0x00, POLL_UNTESTED },
+    { "mega16",     { 0x1E, 0x94, 0x03 }, 0x74, 0x3F, POLL_FF },
+    { "mega162",    { 0x1E, 0x94, 0x04 }, 0x63, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "mega169",    { 0x1E, 0x94, 0x05 }, 0x78, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "mega168",    { 0x1E, 0x94, 0x06 }, 0xFF, 0x3F, POLL_FF },
+    { "mega164pa",  { 0x1E, 0x94, 0x0A }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega168pa",  { 0x1E, 0x94, 0x0B }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "mega164a",   { 0x1E, 0x94, 0x0F }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "at90usb162", { 0x1E, 0x94, 0x82 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "mega16u4",   { 0x1E, 0x94, 0x88 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "mega16u2",   { 0x1E, 0x94, 0x89 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
 
-    { { 0x1E, 0x95, 0x02 }, 0x72, 0x3F, POLL_FF },                      /* mega32 */
-    { { 0x1E, 0x95, 0x03 }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega329 (mega169 devcode) */
-    { { 0x1E, 0x95, 0x04 }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega3290 (mega169 devcode) */
-    { { 0x1E, 0x95, 0x05 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega325 (mega16 devcode) */
-    { { 0x1E, 0x95, 0x06 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega3250 (mega16 devcode) */
-    { { 0x1E, 0x95, 0x08 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega324p (mega16 devcode) */
-    { { 0x1E, 0x95, 0x0B }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega329p (mega169 devcode) */
-    { { 0x1E, 0x95, 0x0C }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega3290p (mega169 devcode) */
-    { { 0x1E, 0x95, 0x0F }, 0xFF, 0x3F, POLL_FF },                      /* mega328p (no devcode) */
-    { { 0x1E, 0x95, 0x11 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega324pa (mega16 devcode) */
-    { { 0x1E, 0x95, 0x15 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega324a */
-    { { 0x1E, 0x95, 0x81 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* at90can32 */
-    { { 0x1E, 0x95, 0x87 }, 0xFF, 0x3F, POLL_FF },                      /* mega32u4 (no devcode) */
-    { { 0x1E, 0x95, 0x8A }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },      /* mega32u2 */
+    { "mega32",     { 0x1E, 0x95, 0x02 }, 0x72, 0x3F, POLL_FF },
+    { "mega329",    { 0x1E, 0x95, 0x03 }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega169 devcode */
+    { "mega3290",   { 0x1E, 0x95, 0x04 }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega169 devcode */
+    { "mega325",    { 0x1E, 0x95, 0x05 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega3250",   { 0x1E, 0x95, 0x06 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega324p",   { 0x1E, 0x95, 0x08 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega329p",   { 0x1E, 0x95, 0x0B }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega169 devcode */
+    { "mega3290p",  { 0x1E, 0x95, 0x0C }, 0x75, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega169 devcode */
+    { "mega328p",   { 0x1E, 0x95, 0x0F }, 0xFF, 0x3F, POLL_FF },
+    { "mega324pa",  { 0x1E, 0x95, 0x11 }, 0x74, 0x3F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega324a",   { 0x1E, 0x95, 0x15 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "at90can32",  { 0x1E, 0x95, 0x81 }, 0xFF, 0x3F, POLL_FF | POLL_UNTESTED },
+    { "mega32u4",   { 0x1E, 0x95, 0x87 }, 0xFF, 0x3F, POLL_FF },
+    { "mega32u2",   { 0x1E, 0x95, 0x8A }, 0xFF, 0x3F, POLL_FF },
 
-    { { 0x1E, 0x96, 0x02 }, 0x45, 0x7F, POLL_FF },                      /* mega64 */
-    { { 0x1E, 0x96, 0x03 }, 0x75, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega649 (mega169 devcode) */
-    { { 0x1E, 0x96, 0x04 }, 0x75, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega6490 (mega169 devcode) */
-    { { 0x1E, 0x96, 0x05 }, 0x74, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega645 (mega16 devcode) */
-    { { 0x1E, 0x96, 0x06 }, 0x74, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega6450 (mega16 devcode) */
-    { { 0x1E, 0x96, 0x08 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega640 */
-    { { 0x1E, 0x96, 0x09 }, 0x74, 0x7F, POLL_FF },                      /* mega644a (mega16 devcode) */
-    { { 0x1E, 0x96, 0x0A }, 0x74, 0x7F, POLL_FF },                      /* mega644pa (mega16 devcode) */
-    { { 0x1E, 0x96, 0x81 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* at90can64 */
-    { { 0x1E, 0x96, 0x82 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* at90usb646/647 */
+    { "mega64",     { 0x1E, 0x96, 0x02 }, 0x45, 0x7F, POLL_FF },
+    { "mega649",    { 0x1E, 0x96, 0x03 }, 0x75, 0x7F, POLL_FF | POLL_UNTESTED },        /* mega169 devcode */
+    { "mega6490",   { 0x1E, 0x96, 0x04 }, 0x75, 0x7F, POLL_FF | POLL_UNTESTED },        /* mega169 devcode */
+    { "mega645",    { 0x1E, 0x96, 0x05 }, 0x74, 0x7F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega6450",   { 0x1E, 0x96, 0x06 }, 0x74, 0x7F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode */
+    { "mega640",    { 0x1E, 0x96, 0x08 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },
+    { "mega644a",   { 0x1E, 0x96, 0x09 }, 0x74, 0x7F, POLL_FF },                        /* mega16 devcode */
+    { "mega644p",   { 0x1E, 0x96, 0x0A }, 0x74, 0x7F, POLL_FF },                        /* mega16 devcode */
+    { "at90can64",  { 0x1E, 0x96, 0x81 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },
+    { "at90usb646", { 0x1E, 0x96, 0x82 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },        /* same: at90usb647 */
 
-    { { 0x1E, 0x97, 0x01 }, 0x41, 0x7F, POLL_7F | POLL_80 | POLL_FF },  /* mega103 */
-    { { 0x1E, 0x97, 0x02 }, 0x43, 0x7F, POLL_FF },                      /* mega128 */
-    { { 0x1E, 0x97, 0x03 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega1280 */
-    { { 0x1E, 0x97, 0x04 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega1281 */
-    { { 0x1E, 0x97, 0x05 }, 0x74, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega1284p (mega16 devcode) */
-    { { 0x1E, 0x97, 0x06 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* mega1284 */
-    { { 0x1E, 0x97, 0x81 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* at90can128 */
-    { { 0x1E, 0x97, 0x82 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },      /* at90usb1286/1287 */
+    { "mega103",    { 0x1E, 0x97, 0x01 }, 0x41, 0x7F, POLL_7F | POLL_80 | POLL_FF },
+    { "mega128",    { 0x1E, 0x97, 0x02 }, 0x43, 0x7F, POLL_FF },
+    { "mega1280",   { 0x1E, 0x97, 0x03 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },
+    { "mega1281",   { 0x1E, 0x97, 0x04 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },
+    { "mega1284p",  { 0x1E, 0x97, 0x05 }, 0x74, 0x7F, POLL_FF | POLL_UNTESTED },        /* mega16 devcode) */
+    { "mega1284",   { 0x1E, 0x97, 0x06 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },
+    { "at90can128", { 0x1E, 0x97, 0x81 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },
+    { "at90usb1286",{ 0x1E, 0x97, 0x82 }, 0xFF, 0x7F, POLL_FF | POLL_UNTESTED },        /* same: at90usb1287 */
 
-    { { 0x1E, 0x98, 0x01 }, 0xFF, 0x00, POLL_UNTESTED },                /* mega2560 */
-    { { 0x1E, 0x98, 0x02 }, 0xFF, 0x00, POLL_UNTESTED },                /* mega2561 */
+    { "mega2560",   { 0x1E, 0x98, 0x01 }, 0xFF, 0x00, POLL_UNTESTED },
+    { "mega2561",   { 0x1E, 0x98, 0x02 }, 0xFF, 0x00, POLL_UNTESTED },
 
-    { { 0x1E, 0xA7, 0x01 }, 0xFF, 0x00, POLL_UNTESTED },                /* mega128rfa1 */
+    { "mega128rfa1",{ 0x1E, 0xA7, 0x01 }, 0xFF, 0x00, POLL_UNTESTED },
 };
 
 #define EV_NONE                 0x00
@@ -334,6 +353,41 @@ static uint8_t ser_recv(void)
 #endif
 } /* ser_recv */
 
+
+#if defined(DISP_WR)
+static uint8_t disp_text[24];
+static uint8_t disp_length = 0;
+static uint8_t disp_pos = 0;
+
+static void disp_putc(uint8_t pos, uint8_t ch)
+{
+    if (ch >= 'a' && ch <= 'z')
+        ch &= ~0x20;
+
+    PORTD = ((ch & 0x7E) << 1);
+    PORTC = ((ch & 0x01) << 3) | (3 - (pos & 0x03));
+    PORTC |= (1<<DISP_WR);
+} /* disp_putc */
+
+
+static void disp_put4(const uint8_t *str)
+{
+    disp_putc(0, *str++);
+    disp_putc(1, *str++);
+    disp_putc(2, *str++);
+    disp_putc(3, *str++);
+} /* disp_put4 */
+
+
+static uint8_t _hexnibble(uint8_t value)
+{
+    value &= 0x0F;
+    return (value < 0x0A) ? ('0' + value)
+                          : ('A' + value - 0x0A);
+} /* _hexnibble */
+#endif /* defined(DISP_WR) */
+
+
 /* Send one byte to target, and return received one */
 static uint8_t spi_rxtx(uint8_t val)
 {
@@ -424,12 +478,13 @@ static void reset_statemachine(uint8_t event);
 static volatile uint16_t reset_timer = 0x0000;
 static volatile uint8_t reset_state;
 
+static uint16_t addr = 0x0000;
+
 
 static void cmdloop(void) __attribute__ ((noreturn));
 static void cmdloop(void)
 {
     static uint8_t page_buf[256];
-    uint16_t addr = 0;
 
     while (1) {
         switch (ser_recv()) {
@@ -825,6 +880,37 @@ static void reset_statemachine(uint8_t event)
                     /* put device in RUN mode */
                     set_reset(1);
 
+#if defined(DISP_WR)
+                    uint8_t *dst = disp_text;
+                    uint8_t *src = (uint8_t *)"unknown";
+
+                    if (device.sig[0] != 0x00) {
+                        src = device.name;
+                    }
+
+                    while (*src != '\0') {
+                        *dst++ = *src++;
+                    }
+
+                    if (device.sig[0] == 0x00) {
+                        *dst++ = ' ';
+                        *dst++ = '0';
+                        *dst++ = 'X';
+                        *dst++ = _hexnibble(device.sig[0] >> 4);
+                        *dst++ = _hexnibble(device.sig[0]);
+                        *dst++ = _hexnibble(device.sig[1] >> 4);
+                        *dst++ = _hexnibble(device.sig[1]);
+                        *dst++ = _hexnibble(device.sig[2] >> 4);
+                        *dst++ = _hexnibble(device.sig[2]);
+                    }
+
+                    *dst++ = ' ';
+                    *dst++ = '\0';
+
+                    disp_length = dst - disp_text;
+                    disp_pos = 0x00;
+#endif /* defined(DISP_WR) */
+
                 } else if ((event == EV_BUTTON_PRESSED) || (event == EV_PROG_ENTER)) {
                     memset(&device, 0x00, sizeof(struct _device));
                     reset_retries = 5;
@@ -979,7 +1065,48 @@ ISR(TIMER0_OVF_vect)
     } else {
         ISP_LED_OFF();
     }
+
+#if defined(DISP_WR)
+    if (reset_state == STATE_IDLE) {
+        if (disp_length != 0x00) {
+            if (!(led_timer & 0x1F)) {
+                disp_put4(disp_text + disp_pos);
+
+                if (disp_pos < (disp_length -4)) {
+                    disp_pos++;
+
+                } else {
+                    disp_putc(0, 'R');
+                    disp_putc(1, 'U');
+                    disp_putc(2, 'N');
+                    disp_putc(3, '-');
+
+                    disp_length = 0x00;
+                    disp_pos = 0x00;
+                }
+            }
+        } else {
+            switch (led_timer & 0x18) {
+                case 0x00:  disp_putc(3, '-'); break;
+                case 0x08:  disp_putc(3, '\\'); break;
+                case 0x10:  disp_putc(3, '1'); break;
+                case 0x18:  disp_putc(3, '/'); break;
+                default:
+                    break;
+            }
+        }
+
+    } else if (reset_state == STATE_RESET_PROGMODE) {
+        uint16_t byte_addres = (addr << 1);
+
+        disp_putc(0, _hexnibble(byte_addres >> 12));
+        disp_putc(1, _hexnibble(byte_addres >> 8));
+        disp_putc(2, _hexnibble(byte_addres >> 4));
+        disp_putc(3, _hexnibble(byte_addres));
+    }
+#endif /* defined(DISP_WR) */
 } /* TIMER0_OVF_vect */
+
 
 #if defined(__AVR_ATmega328P__)
 /*
@@ -1037,7 +1164,7 @@ int main(void)
 #endif
 
     /* init statemachine */
-    reset_statemachine(EV_STATE_ENTER);
+    reset_statemachine(EV_BUTTON_PRESSED);
 
     sei();
 
