@@ -837,7 +837,12 @@ static void cmdloop(void)
             spi_rxtx(val[2]);
             ser_send(spi_rxtx(val[3]));
 
-            _delay_ms(10);
+            /* most CMD_WRITE_* commands need delay */
+            if (val[0] == CMD_WRITE_LOCK_1)
+            {
+                _delay_ms(10);
+            }
+
             ser_send('\r');
             break;
         }
@@ -938,7 +943,7 @@ static void reset_statemachine(uint8_t event)
             case STATE_RESET_SYNC:
                 if (event == EV_STATE_ENTER) {
                     led_mode = LED_ON;
-                    timer = 5; /* timeout 50ms */
+                    timer = 1; /* timeout 50ms */
 
                     /* set SPI speed */
                     SPCR = spi_modes[spi_speed];
