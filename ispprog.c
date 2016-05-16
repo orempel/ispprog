@@ -191,7 +191,7 @@ static const struct _device devices[] PROGMEM = {
     { "at90s8535",  { 0x1E, 0x93, 0x03 }, 0x68, 0x00, POLL_UNTESTED },
     { "mega83",     { 0x1E, 0x93, 0x05 }, 0x65, 0x00, POLL_UNTESTED },
     { "mega8515",   { 0x1E, 0x93, 0x06 }, 0x3A, 0x1F, POLL_FF | POLL_UNTESTED },
-    { "mega8",      { 0x1E, 0x93, 0x07 }, 0x76, 0x1F, POLL_00 | POLL_FF },
+    { "mega8",      { 0x1E, 0x93, 0x07 }, 0x76, 0x1F, POLL_FF },
     { "mega8535",   { 0x1E, 0x93, 0x08 }, 0x69, 0x1F, POLL_FF | POLL_UNTESTED },
     { "mega88",     { 0x1E, 0x93, 0x0A }, 0xFF, 0x1F, POLL_FF },
     { "tiny85",     { 0x1E, 0x93, 0x0B }, 0x20, 0x1F, POLL_FF },                        /* at90s2313 devcode */
@@ -751,7 +751,9 @@ static void cmdloop(void)
                     }
                 }
 
-                if (size != sizeof(page_buf)) {
+                if ((device.pagemask != 0x00) &&
+                    (size != ((device.pagemask +1) << 1))
+                   ) {
                     mem_pagewrite(last_addr);
                 }
 
