@@ -904,6 +904,14 @@ static void reset_statemachine(uint8_t event)
                         *dst++ = _hexnibble(device.sig[2]);
                     }
 
+                    if (device.flags & POLL_UNTESTED) {
+                        src = (uint8_t *)" untested";
+
+                        while (*src != '\0') {
+                                *dst++ = *src++;
+                        }
+                    }
+
                     *dst++ = ' ';
                     *dst++ = '\0';
 
