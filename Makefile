@@ -6,6 +6,7 @@ SIZE	:= avr-size
 
 TARGET = ispprog
 SOURCE = $(wildcard *.c)
+BUILD_DIR = build
 
 #CONFIG = ispprog
 CONFIG = ispprog2
@@ -34,29 +35,33 @@ endif
 # ---------------------------------------------------------------------------
 
 CFLAGS = -pipe -g -Os -mmcu=$(MCU) -Wall -fdata-sections -ffunction-sections
-CFLAGS += -Wa,-adhlns=$(*F).lst -DCONFIG_$(CONFIG)=1
+CFLAGS += -Wa,-adhlns=$(BUILD_DIR)/$(*D)/$(*F).lst -MMD -MP -MF $(BUILD_DIR)/$(*D)/$(*F).d
+CFLAGS += -DCONFIG_$(CONFIG)=1
 LDFLAGS = -Wl,-Map,$(@:.elf=.map),--cref,--relax,--gc-sections
 
 # ---------------------------------------------------------------------------
 
-$(TARGET): $(TARGET).elf
+$(TARGET): $(BUILD_DIR)/$(TARGET).elf
 	@$(SIZE) -B -x --mcu=$(MCU) $<
 
-$(TARGET).elf: $(SOURCE:.c=.o)
+$(BUILD_DIR)/$(TARGET).elf: $(patsubst %,$(BUILD_DIR)/%,$(SOURCE:.c=.o))
 	@echo " Linking file:  $@"
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 	@$(OBJDUMP) -h -S $@ > $(@:.elf=.lss)
 	@$(OBJCOPY) -j .text -j .data -O ihex $@ $(@:.elf=.hex)
 	@$(OBJCOPY) -j .text -j .data -O binary $@ $(@:.elf=.bin)
 
-%.o: %.c $(MAKEFILE_LIST)
+$(BUILD_DIR)/%.o: %.c $(MAKEFILE_LIST)
 	@echo " Building file: $<"
+	@$(shell test -d $(BUILD_DIR)/$(*D) || mkdir -p $(BUILD_DIR)/$(*D))
 	@$(CC) $(CFLAGS) -o $@ -c $<
 
-clean:
-	rm -rf $(SOURCE:.c=.o) $(SOURCE:.c=.lst) $(addprefix $(TARGET), .elf .map .lss .hex .bin)
+include $(shell find $(BUILD_DIR) -name \*.d 2> /dev/null)
 
-install: $(TARGET).elf
+clean:
+	rm -rf $(BUILD_DIR)
+
+install: $(BUILD_DIR)/$(TARGET).elf
 	avrdude $(AVRDUDE_PROG) -p $(AVRDUDE_MCU) -U flash:w:$(<:.elf=.hex)
 
 fuses:
