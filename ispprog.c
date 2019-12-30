@@ -25,9 +25,9 @@
 #include "avrdevice.h"
 #include "display.h"
 #include "target.h"
+#include "uart.h"
 
 #include <util/delay.h>
-#define UART_CALC_BAUDRATE(baudRate) (((uint32_t)F_CPU) / (((uint32_t)baudRate)*16) -1)
 
 /* F_CPU /4 (1.8432MHz) */
 #define SPI_MODE4       ((1<<SPE) | (1<<MSTR))
@@ -115,32 +115,6 @@ static avr_device_t         m_device;
 static uint8_t last_cmd;
 static uint8_t last_val;
 static uint16_t last_addr;
-
-/* Send one byte to PC */
-static void ser_send(uint8_t data)
-{
-#if defined(__AVR_ATmega16__)
-    loop_until_bit_is_set(UCSRA, UDRE);
-    UDR = data;
-#elif defined(__AVR_ATmega328P__)
-    loop_until_bit_is_set(UCSR0A, UDRE0);
-    UDR0 = data;
-#endif
-} /* ser_send */
-
-
-/* Receive one byte from PC */
-static uint8_t ser_recv(void)
-{
-#if defined(__AVR_ATmega16__)
-    loop_until_bit_is_set(UCSRA, RXC);
-    return UDR;
-#elif defined(__AVR_ATmega328P__)
-    loop_until_bit_is_set(UCSR0A, RXC0);
-    return UDR0;
-#endif
-} /* ser_recv */
-
 
 /* Send one byte to target, and return received one */
 static uint8_t spi_rxtx(uint8_t val)
@@ -254,7 +228,7 @@ static void cmdloop(void)
         }
 #endif /* (USE_DISPLAY) */
 
-        switch (ser_recv()) {
+        switch (uart_recv()) {
         /* Enter programming mode */
         case 'P': {
             reset_statemachine(EV_PROG_ENTER);
@@ -262,17 +236,17 @@ static void cmdloop(void)
             while (1) {
                 if (reset_state == STATE_IDLE) {
                     /* device not supported */
-                    ser_send('!');
+                    uart_send('!');
                     break;
 
                 } else if (reset_state == STATE_RESET_PROGMODE) {
                     if (m_device.flags & POLL_UNTESTED) {
                         reset_statemachine(EV_PROG_LEAVE);
                         /* untested device */
-                        ser_send('!');
+                        uart_send('!');
                     } else {
                         /* supported device */
-                        ser_send('\r');
+                        uart_send('\r');
                     }
                     break;
                 }
@@ -282,33 +256,33 @@ static void cmdloop(void)
 
         /* Autoincrement address */
         case 'a':
-            ser_send('Y');
+            uart_send('Y');
             break;
 
         /* Set address */
         case 'A':
-            addr = (ser_recv() << 8);
-            addr |= ser_recv();
-            ser_send('\r');
+            addr = (uart_recv() << 8);
+            addr |= uart_recv();
+            uart_send('\r');
             break;
 
         /* Write program memory, low byte */
         case 'c':
             led_mode = LED_FAST;
-            mem_write(CMD_LOAD_FLASH_LO, addr, ser_recv());
+            mem_write(CMD_LOAD_FLASH_LO, addr, uart_recv());
 
             /* poll on byte addressed targets */
             if (m_device.pagemask == 0x00) {
                 poll();
             }
 
-            ser_send('\r');
+            uart_send('\r');
             break;
 
         /* Write program memory, high byte */
         case 'C':
             led_mode = LED_FAST;
-            mem_write(CMD_LOAD_FLASH_HI, addr, ser_recv());
+            mem_write(CMD_LOAD_FLASH_HI, addr, uart_recv());
 
             /* poll on byte addressed targets */
             if (m_device.pagemask == 0x00) {
@@ -316,45 +290,45 @@ static void cmdloop(void)
             }
 
             addr++;
-            ser_send('\r');
+            uart_send('\r');
             break;
 
         /* Issue Page Write */
         case 'm':
             led_mode = LED_FAST;
             mem_pagewrite(last_addr);
-            ser_send('\r');
+            uart_send('\r');
             break;
 
         /* Read Lock Bits */
         case 'r':
-            ser_send(mem_read(CMD_READ_LOCK_1, CMD_READ_LOCK_2 << 8));
-            ser_send('\r');
+            uart_send(mem_read(CMD_READ_LOCK_1, CMD_READ_LOCK_2 << 8));
+            uart_send('\r');
             break;
 
         /* Read program memory */
         case 'R':
             led_mode = LED_SLOW;
-            ser_send(mem_read(CMD_READ_FLASH_HI, addr));
-            ser_send(mem_read(CMD_READ_FLASH_LO, addr));
+            uart_send(mem_read(CMD_READ_FLASH_HI, addr));
+            uart_send(mem_read(CMD_READ_FLASH_LO, addr));
             addr++;
             break;
 
         /* Read data memory */
         case 'd':
             led_mode = LED_SLOW;
-            ser_send(mem_read(CMD_READ_EEPROM, addr));
+            uart_send(mem_read(CMD_READ_EEPROM, addr));
             addr++;
             break;
 
         /* Write data memory */
         case 'D':
             led_mode = LED_FAST;
-            mem_write(CMD_WRITE_EEPROM, addr, ser_recv());
+            mem_write(CMD_WRITE_EEPROM, addr, uart_recv());
             poll();
 
             addr++;
-            ser_send('\r');
+            uart_send('\r');
             break;
 
         /* Chip erase */
@@ -365,35 +339,35 @@ static void cmdloop(void)
             spi_rxtx(0x00);
 
             _delay_ms(10);
-            ser_send('\r');
+            uart_send('\r');
             break;
 
         /* Write lock bits */
         case 'l': {
-            uint8_t val = ser_recv();
+            uint8_t val = uart_recv();
             spi_rxtx(CMD_WRITE_LOCK_1);
             spi_rxtx(CMD_WRITE_LOCK_2);
             spi_rxtx(0x00);
             spi_rxtx(val);
 
             _delay_ms(10);
-            ser_send('\r');
+            uart_send('\r');
             break;
         }
 
         /* Read fusebits */
         case 'F':
-            ser_send(mem_read(CMD_READ_FUSE_1, CMD_READ_FUSE_2 << 8));
+            uart_send(mem_read(CMD_READ_FUSE_1, CMD_READ_FUSE_2 << 8));
             break;
 
         /* Read high fusebits */
         case 'N':
-            ser_send(mem_read(CMD_READ_FUSE_H_1, CMD_READ_FUSE_H_2 << 8));
+            uart_send(mem_read(CMD_READ_FUSE_H_1, CMD_READ_FUSE_H_2 << 8));
             break;
 
         /* Read extended fusebits */
         case 'Q':
-            ser_send(mem_read(CMD_READ_FUSE_E_1, CMD_READ_FUSE_E_2 << 8));
+            uart_send(mem_read(CMD_READ_FUSE_E_1, CMD_READ_FUSE_E_2 << 8));
             break;
 
         /* Leave programming mode */
@@ -402,76 +376,74 @@ static void cmdloop(void)
         /* Exit Bootloader */
         case 'E':
             reset_statemachine(EV_PROG_LEAVE);
-            ser_send('\r');
+            uart_send('\r');
             break;
 
         /* Select device type */
         case 'T': {
-            ser_recv(); // ignore
-            ser_send('\r');
+            uart_recv(); // ignore
+            uart_send('\r');
             break;
         }
 
         /* Read signature bytes */
-        case 's': {
-            uint8_t i = 2;
-            do {
-                ser_send(m_device.sig[i]);
-            } while (i--);
+        case 's':
+            uart_send(m_device.sig[2]);
+            uart_send(m_device.sig[1]);
+            uart_send(m_device.sig[0]);
             break;
-        }
 
         /* Return supported device codes */
         case 't':
-            avrdevice_iterate_devcodes(ser_send);
-            ser_send(0x00);
+            avrdevice_iterate_devcodes(uart_send);
+            uart_send(0x00);
             break;
 
         /* Return software identifier */
         case 'S':
-            ser_send('A');
-            ser_send('V');
-            ser_send('R');
-            ser_send('-');
-            ser_send('I');
-            ser_send('S');
-            ser_send('P');
+            uart_send('A');
+            uart_send('V');
+            uart_send('R');
+            uart_send('-');
+            uart_send('I');
+            uart_send('S');
+            uart_send('P');
             break;
 
         /* Return software version */
         case 'V':
-            ser_send('3');
-            ser_send('8');
+            uart_send('3');
+            uart_send('8');
             break;
 
         /* Return hardware version */
         case 'v':
-            ser_send('1');
-            ser_send('2');
+            uart_send('1');
+            uart_send('2');
             break;
 
         /* Return programmer type */
         case 'p':
-            ser_send('S');
+            uart_send('S');
             break;
 
         /* Set LED */
         case 'x':
-            ser_recv();
+            uart_recv();
             led_mode = LED_ON;
             break;
 
         /* Clear LED */
         case 'y':
-            ser_recv();
+            uart_recv();
             led_mode = LED_OFF;
             break;
 
         /* Report Block write Mode */
         case 'b': {
-            ser_send('Y');
-            ser_send(sizeof(page_buf) >> 8);
-            ser_send(sizeof(page_buf) & 0xFF);
+            uart_send('Y');
+            uart_send(sizeof(page_buf) >> 8);
+            uart_send(sizeof(page_buf) & 0xFF);
             break;
         }
 
@@ -482,12 +454,11 @@ static void cmdloop(void)
 
             led_mode = LED_FAST;
 
-            size = ser_recv() << 8;
-            size |= ser_recv();
-            type = ser_recv();
+            size = uart_recv() << 8;
+            size |= uart_recv();
+            type = uart_recv();
 
-            for (i = 0; i < size; i++)
-                page_buf[i] = ser_recv();
+            uart_recv_buf(page_buf, size);
 
             if (type == 'F') {
                 for (i = 0; i < size; i += 2) {
@@ -514,7 +485,7 @@ static void cmdloop(void)
                     addr++;
                 }
             }
-            ser_send('\r');
+            uart_send('\r');
             break;
         }
 
@@ -525,20 +496,20 @@ static void cmdloop(void)
 
             led_mode = LED_SLOW;
 
-            size = ser_recv() << 8;
-            size |= ser_recv();
-            type = ser_recv();
+            size = uart_recv() << 8;
+            size |= uart_recv();
+            type = uart_recv();
 
             if (type == 'F') {
                 for (i = 0; i < size; i += 2) {
-                    ser_send(mem_read(CMD_READ_FLASH_LO, addr));
-                    ser_send(mem_read(CMD_READ_FLASH_HI, addr));
+                    uart_send(mem_read(CMD_READ_FLASH_LO, addr));
+                    uart_send(mem_read(CMD_READ_FLASH_HI, addr));
                     addr++;
                 }
 
             } else if (type == 'E') {
                 for (i = 0; i < size; i++) {
-                    ser_send(mem_read(CMD_READ_EEPROM, addr));
+                    uart_send(mem_read(CMD_READ_EEPROM, addr));
                     addr++;
                 }
             }
@@ -547,45 +518,42 @@ static void cmdloop(void)
 
         /* Write fusebits */
         case 'f': {
-            uint8_t val = ser_recv();
+            uint8_t val = uart_recv();
             spi_rxtx(CMD_WRITE_FUSE_1);
             spi_rxtx(CMD_WRITE_FUSE_2);
             spi_rxtx(0x00);
             spi_rxtx(val);
 
             _delay_ms(10);
-            ser_send('\r');
+            uart_send('\r');
             break;
         }
 
         /* Universial command */
         case ':': {
             uint8_t val[3];
-            val[0] = ser_recv();
-            val[1] = ser_recv();
-            val[2] = ser_recv();
+
+            uart_recv_buf(val, sizeof(val));
 
             spi_rxtx(val[0]);
             spi_rxtx(val[1]);
-            ser_send(spi_rxtx(val[2]));
+            uart_send(spi_rxtx(val[2]));
 
             _delay_ms(10);
-            ser_send('\r');
+            uart_send('\r');
             break;
         }
 
         /* New universal command */
         case '.': {
             uint8_t val[4];
-            val[0] = ser_recv();
-            val[1] = ser_recv();
-            val[2] = ser_recv();
-            val[3] = ser_recv();
+
+            uart_recv_buf(val, sizeof(val));
 
             spi_rxtx(val[0]);
             spi_rxtx(val[1]);
             spi_rxtx(val[2]);
-            ser_send(spi_rxtx(val[3]));
+            uart_send(spi_rxtx(val[3]));
 
             /* most CMD_WRITE_* commands need delay */
             if (val[0] == CMD_WRITE_LOCK_1)
@@ -593,7 +561,7 @@ static void cmdloop(void)
                 _delay_ms(10);
             }
 
-            ser_send('\r');
+            uart_send('\r');
             break;
         }
 
@@ -602,7 +570,7 @@ static void cmdloop(void)
             break;
 
         default:
-            ser_send('?');
+            uart_send('?');
             break;
         }
     }
@@ -843,27 +811,7 @@ int main(void)
 {
     GPIO_INIT();
 
-#if defined(OSCCAL_VALUE)
-    OSCCAL = OSCCAL_VALUE;
-#endif /* defined(OSCCAL_VALUE) */
-
-#if defined(__AVR_ATmega16__)
-    /* Set baud rate */
-    UBRRH = (UART_CALC_BAUDRATE(BAUDRATE)>>8) & 0xFF;
-    UBRRL = (UART_CALC_BAUDRATE(BAUDRATE) & 0xFF);
-
-    /* enable usart with 8n1 */
-    UCSRB = (1<<TXEN) | (1<<RXEN);
-    UCSRC = (1<<URSEL) | (1<<UCSZ1) | (1<<UCSZ0);
-#elif defined(__AVR_ATmega328P__)
-    /* Set baud rate */
-    UBRR0H = (UART_CALC_BAUDRATE(BAUDRATE)>>8) & 0xFF;
-    UBRR0L = (UART_CALC_BAUDRATE(BAUDRATE) & 0xFF);
-
-    /* enable usart with 8n1 */
-    UCSR0B = (1<<TXEN0) | (1<<RXEN0);
-    UCSR0C = (1<<UCSZ01) | (1<<UCSZ00);
-#endif
+    uart_init();
 
     /* enable SPI master mode */
     SPCR = SPI_MODE4;
