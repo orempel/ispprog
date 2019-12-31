@@ -1,7 +1,7 @@
 /***************************************************************************
  *   C based avr910 / avr109 ISP Adapter                                   *
  *                                                                         *
- *   Copyright (C) 2006 - 20011 by Olaf Rempel                             *
+ *   Copyright (C) 2006 - 2020 by Olaf Rempel                              *
  *   razzor AT kopf MINUS tisch DOT de                                     *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
