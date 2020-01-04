@@ -152,7 +152,7 @@ static uint8_t spi_speed = SPI_SPEED_PROBE;
 #define POLL_UNTESTED   0x80    /* device not tested */
 
 struct _device {
-    uint8_t name[12];
+    char    name[12];
     uint8_t sig[3];     /* device signature */
     uint8_t devcode;    /* avr910 device code */
     uint16_t pagemask;  /* pagemask (pagesize in words!) */
@@ -355,11 +355,11 @@ static uint8_t ser_recv(void)
 
 
 #if defined(DISP_WR)
-static uint8_t disp_text[24];
+static char    disp_text[24];
 static uint8_t disp_length = 0;
 static uint8_t disp_pos = 0;
 
-static void disp_putc(uint8_t pos, uint8_t ch)
+static void disp_putc(uint8_t pos, char ch)
 {
     if (ch >= 'a' && ch <= 'z')
         ch &= ~0x20;
@@ -370,7 +370,7 @@ static void disp_putc(uint8_t pos, uint8_t ch)
 } /* disp_putc */
 
 
-static void disp_put4(const uint8_t *str)
+static void disp_put4(const char *str)
 {
     disp_putc(0, *str++);
     disp_putc(1, *str++);
@@ -379,7 +379,7 @@ static void disp_put4(const uint8_t *str)
 } /* disp_put4 */
 
 
-static uint8_t _hexnibble(uint8_t value)
+static char _hexnibble(char value)
 {
     value &= 0x0F;
     return (value < 0x0A) ? ('0' + value)
@@ -888,8 +888,8 @@ static void reset_statemachine(uint8_t event)
                     set_reset(1);
 
 #if defined(DISP_WR)
-                    uint8_t *dst = disp_text;
-                    uint8_t *src;
+                    char *dst = disp_text;
+                    const char *src;
 
                     if (device.name[0] != '\0')
                     {
@@ -913,7 +913,7 @@ static void reset_statemachine(uint8_t event)
                     }
 
                     if (device.flags & POLL_UNTESTED) {
-                        src = (uint8_t *)" untested";
+                        src = " untested";
 
                         while (*src != '\0') {
                                 *dst++ = *src++;
