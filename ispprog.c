@@ -889,17 +889,18 @@ static void reset_statemachine(uint8_t event)
 
 #if defined(DISP_WR)
                     uint8_t *dst = disp_text;
-                    uint8_t *src = (uint8_t *)"unknown";
+                    uint8_t *src;
 
-                    if (device.sig[0] != 0x00) {
+                    if (device.name[0] != '\0')
+                    {
                         src = device.name;
+                        while (*src != '\0')
+                        {
+                            *dst++ = *src++;
+                        }
                     }
-
-                    while (*src != '\0') {
-                        *dst++ = *src++;
-                    }
-
-                    if (device.sig[0] == 0x00) {
+                    else
+                    {
                         *dst++ = ' ';
                         *dst++ = '0';
                         *dst++ = 'X';
@@ -927,7 +928,6 @@ static void reset_statemachine(uint8_t event)
 #endif /* defined(DISP_WR) */
 
                 } else if ((event == EV_BUTTON_PRESSED) || (event == EV_PROG_ENTER)) {
-                    memset(&device, 0x00, sizeof(struct _device));
                     reset_retries = 5;
                     reset_cause = event;
 
@@ -958,19 +958,26 @@ static void reset_statemachine(uint8_t event)
                     sync = spi_rxtx(0x00);
                     spi_rxtx(0x00);
 
+                    memset(&device, 0x00, sizeof(struct _device));
+
                     if (sync == CMD_PROG_ENABLE_2) {
                         uint8_t i;
-                        uint8_t sig[3];
 
                         for (i = 0; i < 3; i++) {
-                            sig[i] = mem_read(CMD_READ_SIG_1, (CMD_READ_SIG_2 << 8) | i);
+                            device.sig[i] = mem_read(CMD_READ_SIG_1, (CMD_READ_SIG_2 << 8) | i);
                         }
 
                         for (i = 0; i < ARRAY_SIZE(devices); i++) {
-                            if (memcmp_P(sig, devices[i].sig, sizeof(device.sig)) == 0) {
+                            if (memcmp_P(device.sig, devices[i].sig, sizeof(device.sig)) == 0) {
                                 memcpy_P(&device, &devices[i], sizeof(struct _device));
                                 break;
                             }
+                        }
+
+                        /* unknown devices are untested */
+                        if (device.name[0] == '\0')
+                        {
+                            device.flags |= POLL_UNTESTED;
                         }
 
                         state = (reset_cause == EV_PROG_ENTER) ? STATE_RESET_PROGMODE
