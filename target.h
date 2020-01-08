@@ -19,14 +19,15 @@
 #define ISP_SCK         PORTB7        /* to target */
 #define RESET_IN        PORTD3        /* high active */
 
-#define ISP_INACTIVE()  {   /* ISP_SCK, ISP_MOSI and ISP_RESET are inputs */ \
-                            DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
-                            PORTB |= (1<<ISP_RESET); \
+#define RESET_INACTIVE(){ PORTB |= (1<<ISP_RESET); }
+#define RESET_ACTIVE()  { PORTB &= ~(1<<ISP_RESET); }
+
+#define ISP_INACTIVE()  {   /* ISP_SCK and ISP_MOSI are inputs */ \
+                            DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI)); \
                         };
 
-#define ISP_ACTIVE()    {   /* ISP_SCK, ISP_MOSI and ISP_RESET are outputs, set ISP_RESET low */ \
-                            DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI) | (1<<ISP_RESET)); \
-                            PORTB &= ~(1<<ISP_RESET); \
+#define ISP_ACTIVE()    {   /* ISP_SCK and ISP_MOSI are outputs */ \
+                            DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI)); \
                         };
 
 #define ISP_LED_ON()    { PORTB &= ~(1<<ISP_LED); };
@@ -67,14 +68,15 @@
 #define ISP_SCK         PORTB5          /* to target */
 #define RESET_IN        PORTB1          /* low active */
 
-#define ISP_INACTIVE()  {   /* ISP_SCK, ISP_MOSI are inputs, set ISP_RESET high */ \
+#define RESET_INACTIVE(){ PORTB |= (1<<ISP_RESET); }
+#define RESET_ACTIVE()  { PORTB &= ~(1<<ISP_RESET); }
+
+#define ISP_INACTIVE()  {   /* ISP_SCK and ISP_MOSI are inputs */ \
                             DDRB &= ~((1<<ISP_SCK) | (1<<ISP_MOSI)); \
-                            PORTB |= (1<<ISP_RESET); \
                         };
 
-#define ISP_ACTIVE()    {   /* ISP_SCK, ISP_MOSI and ISP_RESET are outputs, set ISP_RESET low */ \
+#define ISP_ACTIVE()    {   /* ISP_SCK and ISP_MOSI and ISP_RESET are outputs */ \
                             DDRB |= ((1<<ISP_SCK) | (1<<ISP_MOSI)); \
-                            PORTB &= ~(1<<ISP_RESET); \
                         };
 
 #define ISP_LED_ON()    { PORTB |= (1<<ISP_LED); };
