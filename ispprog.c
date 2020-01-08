@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "avrdevice.h"
+#include "display.h"
 #include "target.h"
 
 #include <util/delay.h>
@@ -141,40 +142,6 @@ static uint8_t ser_recv(void)
 } /* ser_recv */
 
 
-#if defined(DISP_WR)
-static char    disp_text[24];
-static uint8_t disp_length = 0;
-static uint8_t disp_pos = 0;
-
-static void disp_putc(uint8_t pos, char ch)
-{
-    if (ch >= 'a' && ch <= 'z')
-        ch &= ~0x20;
-
-    PORTD = ((ch & 0x7E) << 1);
-    PORTC = ((ch & 0x01) << 3) | (3 - (pos & 0x03));
-    PORTC |= (1<<DISP_WR);
-} /* disp_putc */
-
-
-static void disp_put4(const char *str)
-{
-    disp_putc(0, *str++);
-    disp_putc(1, *str++);
-    disp_putc(2, *str++);
-    disp_putc(3, *str++);
-} /* disp_put4 */
-
-
-static char _hexnibble(char value)
-{
-    value &= 0x0F;
-    return (value < 0x0A) ? ('0' + value)
-                          : ('A' + value - 0x0A);
-} /* _hexnibble */
-#endif /* defined(DISP_WR) */
-
-
 /* Send one byte to target, and return received one */
 static uint8_t spi_rxtx(uint8_t val)
 {
@@ -274,6 +241,19 @@ static void cmdloop(void)
     static uint8_t page_buf[256];
 
     while (1) {
+#if (USE_DISPLAY)
+        if (reset_state == STATE_RESET_PROGMODE)
+        {
+            uint16_t byte_address;
+
+            byte_address = (addr << 1);
+            display_show_hex(byte_address >> 8, 0);
+            display_show_hex(byte_address & 0xFF, 1);
+
+            display_set_mode(DISPLAY_MODE_STATIC);
+        }
+#endif /* (USE_DISPLAY) */
+
         switch (ser_recv()) {
         /* Enter programming mode */
         case 'P': {
@@ -657,46 +637,6 @@ static void reset_statemachine(uint8_t event)
                     /* put device in RUN mode */
                     set_reset(1);
 
-#if defined(DISP_WR)
-                    char *dst = disp_text;
-                    const char *src;
-
-                    if (m_device.name[0] != '\0')
-                    {
-                        src = m_device.name;
-                        while (*src != '\0')
-                        {
-                            *dst++ = *src++;
-                        }
-                    }
-                    else
-                    {
-                        *dst++ = ' ';
-                        *dst++ = '0';
-                        *dst++ = 'X';
-                        *dst++ = _hexnibble(m_device.sig[0] >> 4);
-                        *dst++ = _hexnibble(m_device.sig[0]);
-                        *dst++ = _hexnibble(m_device.sig[1] >> 4);
-                        *dst++ = _hexnibble(m_device.sig[1]);
-                        *dst++ = _hexnibble(m_device.sig[2] >> 4);
-                        *dst++ = _hexnibble(m_device.sig[2]);
-                    }
-
-                    if (m_device.flags & POLL_UNTESTED) {
-                        src = " untested";
-
-                        while (*src != '\0') {
-                                *dst++ = *src++;
-                        }
-                    }
-
-                    *dst++ = ' ';
-                    *dst++ = '\0';
-
-                    disp_length = dst - disp_text;
-                    disp_pos = 0x00;
-#endif /* defined(DISP_WR) */
-
                 } else if ((event == EV_BUTTON_PRESSED) || (event == EV_PROG_ENTER)) {
                     reset_retries = 5;
                     reset_cause = event;
@@ -739,8 +679,7 @@ static void reset_statemachine(uint8_t event)
 
                         avrdevice_get_by_signature(&m_device, m_device.sig);
 
-                        state = (reset_cause == EV_PROG_ENTER) ? STATE_RESET_PROGMODE
-                                                               : STATE_IDLE;
+                        state = STATE_RESET_PROGMODE;
 
                     } else {
                         state = STATE_RESET_RETRY;
@@ -776,6 +715,10 @@ static void reset_statemachine(uint8_t event)
 
             case STATE_RESET_PROGMODE:
                 if (event == EV_STATE_ENTER) {
+                    if (reset_cause == EV_BUTTON_PRESSED)
+                    {
+                        state = STATE_IDLE;
+                    }
 
                 } else if (event == EV_PROG_LEAVE) {
                     /* was in prog mode (osc changed?), probe speed next time */
@@ -791,6 +734,33 @@ static void reset_statemachine(uint8_t event)
                 state = STATE_IDLE;
                 break;
         }
+
+#if (USE_DISPLAY)
+        if ((m_state == STATE_IDLE) &&
+            ((oldstate == STATE_RESET_RETRY) ||
+             (oldstate == STATE_RESET_PROGMODE)
+            ))
+        {
+            if (m_device.name[0] != '\0')
+            {
+                display_show_string(m_device.name, 0);
+
+                if (m_device.flags & POLL_UNTESTED)
+                {
+                    display_show_string(" untested", 1);
+                }
+            }
+            else
+            {
+                display_show_string("unknown 0X", 0);
+                display_show_hex(m_device.sig[0], 1);
+                display_show_hex(m_device.sig[1], 1);
+                display_show_hex(m_device.sig[2], 1);
+            }
+
+            display_set_mode(DISPLAY_MODE_SCROLL_ONCE);
+        }
+#endif /* (USE_DISPLAY) */
 
         event = (oldstate != state) ? EV_STATE_ENTER
                                     : EV_NONE;
@@ -847,45 +817,9 @@ ISR(TIMER0_OVF_vect)
         ISP_LED_OFF();
     }
 
-#if defined(DISP_WR)
-    if (reset_state == STATE_IDLE) {
-        if (disp_length != 0x00) {
-            if (!(led_timer & 0x1F)) {
-                disp_put4(disp_text + disp_pos);
-
-                if (disp_pos < (disp_length -4)) {
-                    disp_pos++;
-
-                } else {
-                    disp_putc(0, 'R');
-                    disp_putc(1, 'U');
-                    disp_putc(2, 'N');
-                    disp_putc(3, '-');
-
-                    disp_length = 0x00;
-                    disp_pos = 0x00;
-                }
-            }
-        } else {
-            switch (led_timer & 0x18) {
-                case 0x00:  disp_putc(3, '-'); break;
-                case 0x08:  disp_putc(3, '\\'); break;
-                case 0x10:  disp_putc(3, '1'); break;
-                case 0x18:  disp_putc(3, '/'); break;
-                default:
-                    break;
-            }
-        }
-
-    } else if (reset_state == STATE_RESET_PROGMODE) {
-        uint16_t byte_addres = (addr << 1);
-
-        disp_putc(0, _hexnibble(byte_addres >> 12));
-        disp_putc(1, _hexnibble(byte_addres >> 8));
-        disp_putc(2, _hexnibble(byte_addres >> 4));
-        disp_putc(3, _hexnibble(byte_addres));
-    }
-#endif /* defined(DISP_WR) */
+#if (USE_DISPLAY)
+    display_update();
+#endif /* (USE_DISPLAY) */
 } /* TIMER0_OVF_vect */
 
 

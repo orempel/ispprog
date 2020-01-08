@@ -33,6 +33,8 @@
 #define ISP_LED_OFF()   { PORTB |= (1<<ISP_LED); };
 #define ISP_CHECK()     (PIND & (1<<RESET_IN))
 
+#define USE_DISPLAY     0
+
 #define TIMER_INIT()    {   /* timer0, FCPU/1024, overflow interrupt */ \
                             TCCR0 = (1<<CS02) | (1<<CS00); \
                             TIMSK = (1<<TOIE0); \
@@ -80,6 +82,7 @@
 #define ISP_CHECK()     !(PINB & (1<<RESET_IN))
 
 /* DL1414 display */
+#define USE_DISPLAY     1
 #define DISP_WR         PORTC2          /* low active */
 #define DISP_A0         PORTC0
 #define DISP_A1         PORTC1
