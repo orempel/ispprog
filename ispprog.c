@@ -263,47 +263,14 @@ static void reset_statemachine_wait(uint8_t events)
 } /* reset_statemachine_wait */
 
 
-static void cmdloop(void) __attribute__ ((noreturn));
-static void cmdloop(void)
+static void cmd_handler_isp(uint8_t cmd)
 {
-    while (1)
+    switch (cmd)
     {
-        if (!uart_rx_ready())
-        {
-            reset_statemachine(EV_NONE);
-            continue;
-        }
-
-#if (USE_DISPLAY)
-        if (m_state == STATE_RESET_PROGMODE)
-        {
-            uint16_t byte_address;
-
-            byte_address = (m_address << 1);
-            display_show_hex(byte_address >> 8, 0);
-            display_show_hex(byte_address & 0xFF, 1);
-
-            display_set_mode(DISPLAY_MODE_STATIC);
-        }
-#endif /* (USE_DISPLAY) */
-
-        switch (uart_recv()) {
         /* Enter programming mode */
         case 'P':
             reset_statemachine_wait(EV_PROG_ENTER);
             uart_send((m_state == STATE_RESET_PROGMODE) ? '\r' : '!');
-            break;
-
-        /* Autoincrement address */
-        case 'a':
-            uart_send('Y');
-            break;
-
-        /* Set address */
-        case 'A':
-            m_address = (uart_recv() << 8);
-            m_address |= uart_recv();
-            uart_send('\r');
             break;
 
         /* Write program memory, low byte */
@@ -401,80 +368,11 @@ static void cmdloop(void)
             uart_send(isp_mem_read(CMD_READ_FUSE_E_1, CMD_READ_FUSE_E_2 << 8));
             break;
 
-        /* Leave programming mode */
-        case 'L':
-
-        /* Exit Bootloader */
-        case 'E':
-            reset_statemachine_wait(EV_PROG_LEAVE);
-            uart_send('\r');
-            break;
-
-        /* Select device type */
-        case 'T': {
-            uart_recv(); // ignore
-            uart_send('\r');
-            break;
-        }
-
         /* Read signature bytes */
         case 's':
             uart_send(m_device.sig[2]);
             uart_send(m_device.sig[1]);
             uart_send(m_device.sig[0]);
-            break;
-
-        /* Return supported device codes */
-        case 't':
-            avrdevice_iterate_devcodes(uart_send);
-            uart_send(0x00);
-            break;
-
-        /* Return software identifier */
-        case 'S':
-            uart_send('A');
-            uart_send('V');
-            uart_send('R');
-            uart_send('-');
-            uart_send('I');
-            uart_send('S');
-            uart_send('P');
-            break;
-
-        /* Return software version */
-        case 'V':
-            uart_send('3');
-            uart_send('8');
-            break;
-
-        /* Return hardware version */
-        case 'v':
-            uart_send('1');
-            uart_send('2');
-            break;
-
-        /* Return programmer type */
-        case 'p':
-            uart_send('S');
-            break;
-
-        /* Set LED */
-        case 'x':
-            uart_recv();
-            m_led_mode = LED_ON;
-            break;
-
-        /* Clear LED */
-        case 'y':
-            uart_recv();
-            m_led_mode = LED_OFF;
-            break;
-
-        /* Report Block write Mode */
-        case 'b':
-            uart_send('Y');
-            uart_send(sizeof(m_page_buf) >> 8);
-            uart_send(sizeof(m_page_buf) & 0xFF);
             break;
 
         /* Block Write */
@@ -589,13 +487,129 @@ static void cmdloop(void)
             break;
         }
 
-        /* ESC */
-        case 0x1B:
-            break;
-
         default:
             uart_send('?');
             break;
+    }
+} /* cmd_handler_isp */
+
+
+static void cmdloop(void) __attribute__ ((noreturn));
+static void cmdloop(void)
+{
+    while (1)
+    {
+        uint8_t cmd;
+
+        if (!uart_rx_ready())
+        {
+            reset_statemachine(EV_NONE);
+            continue;
+        }
+
+#if (USE_DISPLAY)
+        if (m_state == STATE_RESET_PROGMODE)
+        {
+            uint16_t byte_address;
+
+            byte_address = (m_address << 1);
+            display_show_hex(byte_address >> 8, 0);
+            display_show_hex(byte_address & 0xFF, 1);
+
+            display_set_mode(DISPLAY_MODE_STATIC);
+        }
+#endif /* (USE_DISPLAY) */
+
+        cmd = uart_recv();
+        switch (cmd)
+        {
+            /* Autoincrement address */
+            case 'a':
+                uart_send('Y');
+                break;
+
+            /* Set address */
+            case 'A':
+                m_address = (uart_recv() << 8);
+                m_address |= uart_recv();
+                uart_send('\r');
+                break;
+
+            /* Leave programming mode */
+            case 'L':
+
+            /* Exit Bootloader */
+            case 'E':
+                reset_statemachine_wait(EV_PROG_LEAVE);
+                uart_send('\r');
+                break;
+
+            /* Select device type */
+            case 'T':
+                uart_recv(); // ignore
+                uart_send('\r');
+                break;
+
+            /* Return supported device codes */
+            case 't':
+                avrdevice_iterate_devcodes(uart_send);
+                uart_send(0x00);
+                break;
+
+            /* Return software identifier */
+            case 'S':
+                uart_send('A');
+                uart_send('V');
+                uart_send('R');
+                uart_send('-');
+                uart_send('I');
+                uart_send('S');
+                uart_send('P');
+                break;
+
+            /* Return software version */
+            case 'V':
+                uart_send('3');
+                uart_send('8');
+                break;
+
+            /* Return hardware version */
+            case 'v':
+                uart_send('1');
+                uart_send('2');
+                break;
+
+            /* Return programmer type */
+            case 'p':
+                uart_send('S');
+                break;
+
+            /* Set LED */
+            case 'x':
+                uart_recv();
+                m_led_mode = LED_ON;
+                break;
+
+            /* Clear LED */
+            case 'y':
+                uart_recv();
+                m_led_mode = LED_OFF;
+                break;
+
+            /* Report Block write Mode */
+            case 'b':
+                uart_send('Y');
+                uart_send(sizeof(m_page_buf) >> 8);
+                uart_send(sizeof(m_page_buf) & 0xFF);
+                break;
+
+            /* ESC */
+            case 0x1B:
+                break;
+
+            default:
+                cmd_handler_isp(cmd);
+                break;
         }
     }
 } /* cmdloop */
