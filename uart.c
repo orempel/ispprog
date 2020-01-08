@@ -54,6 +54,19 @@ uint8_t uart_recv(void)
 
 
 /* ***********************************************************************
+ * uart_rx_ready
+ * *********************************************************************** */
+uint8_t uart_rx_ready(void)
+{
+#if defined(__AVR_ATmega16__)
+    return ((UCSRA & (1<<RXC)) == (1<<RXC));
+#elif defined(__AVR_ATmega328P__)
+    return ((UCSR0A & (1<<RXC0)) == (1<<RXC0));
+#endif
+} /* uart_rx_ready */
+
+
+/* ***********************************************************************
  * uart_recv_buf
  * *********************************************************************** */
 void uart_recv_buf(uint8_t * p_data, uint16_t data_length)

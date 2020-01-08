@@ -7,6 +7,7 @@
 
 void    uart_send       (uint8_t data);
 uint8_t uart_recv       (void);
+uint8_t uart_rx_ready   (void);
 
 void    uart_recv_buf   (uint8_t * p_data, uint16_t data_length);
 

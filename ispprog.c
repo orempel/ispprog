@@ -31,10 +31,10 @@
 #define EV_NONE                 0x00
 #define EV_STATE_ENTER          0x01
 #define EV_BUTTON_PRESSED       0x02
-#define EV_BUTTON_RELEASED      0x03
-#define EV_TIMEOUT              0x04
-#define EV_PROG_ENTER           0x11
-#define EV_PROG_LEAVE           0x12
+#define EV_BUTTON_RELEASED      0x04
+#define EV_TIMEOUT              0x08
+#define EV_PROG_ENTER           0x10
+#define EV_PROG_LEAVE           0x20
 
 #define STATE_IDLE              0x00    /* nothing */
 #define STATE_RESET_SYNC        0x01
@@ -48,24 +48,227 @@
 #define LED_ON                  0x80
 
 
-static volatile uint8_t led_mode = LED_OFF;
+static volatile uint8_t     m_led_mode = LED_OFF;
+static volatile uint8_t     m_reset_timer;
+static volatile uint8_t     m_events;
+static uint8_t              m_state;
 
 static uint8_t              m_page_buf[256];
 static avr_device_t         m_device;
 static uint16_t             m_address = 0x0000;
 
 
-static void reset_statemachine(uint8_t event);
-static volatile uint16_t reset_timer = 0x0000;
-static volatile uint8_t reset_state;
+static void reset_statemachine(uint8_t events)
+{
+    static uint8_t reset_retries;
+    static uint8_t reset_cause;
+
+    uint8_t oldstate;
+    uint8_t timer;
+
+    /* shortcut: there is nothing to do */
+    if ((events == EV_NONE) &&
+        (m_events == EV_NONE)
+       )
+    {
+        return;
+    }
+
+    cli();
+    /* get button/timer events */
+    events |= m_events;
+    m_events = 0x00;
+
+    /* disable timer */
+    timer = m_reset_timer;
+    m_reset_timer = 0x0000;
+    sei();
+
+    do {
+        oldstate = m_state;
+
+        switch (m_state)
+        {
+            case STATE_IDLE:
+                if (events & EV_STATE_ENTER)
+                {
+                    /* remove all events */
+                    events = EV_NONE;
+
+                    timer = 0; /* stop timer */
+
+                    spi_init(0);
+
+                    /* put device in RUN mode */
+                    RESET_INACTIVE();
+                    m_led_mode = LED_OFF;
+                }
+                else if (events & (EV_BUTTON_PRESSED | EV_PROG_ENTER))
+                {
+                    reset_cause = events;
+                    events &= ~(EV_BUTTON_PRESSED | EV_PROG_ENTER);
+
+                    reset_retries = 5;
+
+                    /* enable SPI interface */
+                    spi_init(1);
+
+                    m_state = STATE_RESET_SYNC;
+                }
+                break;
+
+            case STATE_RESET_SYNC:
+                if (events & EV_STATE_ENTER)
+                {
+                    events &= ~(EV_STATE_ENTER);
+
+                    timer = 1; /* timeout 10ms */
+
+                    /* put device in ISP mode */
+                    RESET_ACTIVE();
+                    m_led_mode = LED_ON;
+                }
+                else if (events & EV_TIMEOUT)
+                {
+                    events &= ~(EV_TIMEOUT);
+
+                    memset(&m_device, 0x00, sizeof(avr_device_t));
+
+                    if (isp_enter_progmode())
+                    {
+                        isp_read_signature(m_device.sig);
+                        avrdevice_get_by_signature(&m_device, m_device.sig);
+
+                        m_state = STATE_RESET_PROGMODE;
+                    }
+                    else
+                    {
+                        m_state = STATE_RESET_RETRY;
+                    }
+                }
+                break;
+
+            case STATE_RESET_RETRY:
+                if (events & EV_STATE_ENTER)
+                {
+                    events &= ~(EV_STATE_ENTER);
+
+                    timer = 5; /* timeout 50ms */
+
+                    /* put device in RUN mode */
+                    RESET_INACTIVE();
+                    m_led_mode = LED_OFF;
+                }
+                else if (events & EV_TIMEOUT)
+                {
+                    events &= ~(EV_TIMEOUT);
+
+                    reset_retries--;
+                    if (reset_retries > 0)
+                    {
+                        /* try lower frequency */
+                        spi_set_clk(SPI_SET_CLK_DEC);
+
+                        m_state = STATE_RESET_SYNC;
+                    }
+                    else
+                    {
+                        /* got no sync */
+                        m_state = STATE_IDLE;
+                    }
+                }
+                break;
+
+            case STATE_RESET_PROGMODE:
+                if (events & EV_STATE_ENTER)
+                {
+                    events &= ~(EV_STATE_ENTER);
+
+                    if ((m_device.flags & POLL_UNTESTED) ||
+                        (reset_cause == EV_BUTTON_PRESSED)
+                       )
+                    {
+                        m_state = STATE_IDLE;
+                    }
+                }
+                else if (events & (EV_PROG_LEAVE | EV_BUTTON_PRESSED))
+                {
+                    events &= ~(EV_PROG_LEAVE | EV_BUTTON_PRESSED);
+
+                    m_state = STATE_IDLE;
+                }
+                break;
+
+            default:
+                m_state = STATE_IDLE;
+                break;
+        }
+
+#if (USE_DISPLAY)
+        if ((m_state == STATE_IDLE) &&
+            ((oldstate == STATE_RESET_RETRY) ||
+             (oldstate == STATE_RESET_PROGMODE)
+            ))
+        {
+            if (m_device.name[0] != '\0')
+            {
+                display_show_string(m_device.name, 0);
+
+                if (m_device.flags & POLL_UNTESTED)
+                {
+                    display_show_string(" untested", 1);
+                }
+            }
+            else
+            {
+                display_show_string("unknown 0X", 0);
+                display_show_hex(m_device.sig[0], 1);
+                display_show_hex(m_device.sig[1], 1);
+                display_show_hex(m_device.sig[2], 1);
+            }
+
+            display_set_mode(DISPLAY_MODE_SCROLL_ONCE);
+        }
+#endif /* (USE_DISPLAY) */
+
+        if (oldstate != m_state)
+        {
+            events |= EV_STATE_ENTER;
+        }
+    } while (oldstate != m_state);
+
+    cli();
+    /* start timer again */
+    m_reset_timer = timer;
+    sei();
+} /* reset_statemachine */
+
+
+static void reset_statemachine_wait(uint8_t events)
+{
+    reset_statemachine(events);
+
+    /* wait while timer is running or timer elapsed */
+    while (m_reset_timer || m_events)
+    {
+        reset_statemachine(EV_NONE);
+    }
+} /* reset_statemachine_wait */
 
 
 static void cmdloop(void) __attribute__ ((noreturn));
 static void cmdloop(void)
 {
-    while (1) {
+    while (1)
+    {
+        if (!uart_rx_ready())
+        {
+            reset_statemachine(EV_NONE);
+            continue;
+        }
+
 #if (USE_DISPLAY)
-        if (reset_state == STATE_RESET_PROGMODE)
+        if (m_state == STATE_RESET_PROGMODE)
         {
             uint16_t byte_address;
 
@@ -79,29 +282,10 @@ static void cmdloop(void)
 
         switch (uart_recv()) {
         /* Enter programming mode */
-        case 'P': {
-            reset_statemachine(EV_PROG_ENTER);
-
-            while (1) {
-                if (reset_state == STATE_IDLE) {
-                    /* device not supported */
-                    uart_send('!');
-                    break;
-
-                } else if (reset_state == STATE_RESET_PROGMODE) {
-                    if (m_device.flags & POLL_UNTESTED) {
-                        reset_statemachine(EV_PROG_LEAVE);
-                        /* untested device */
-                        uart_send('!');
-                    } else {
-                        /* supported device */
-                        uart_send('\r');
-                    }
-                    break;
-                }
-            }
+        case 'P':
+            reset_statemachine_wait(EV_PROG_ENTER);
+            uart_send((m_state == STATE_RESET_PROGMODE) ? '\r' : '!');
             break;
-        }
 
         /* Autoincrement address */
         case 'a':
@@ -117,7 +301,7 @@ static void cmdloop(void)
 
         /* Write program memory, low byte */
         case 'c':
-            led_mode = LED_FAST;
+            m_led_mode = LED_FAST;
             isp_mem_write(CMD_LOAD_FLASH_LO, m_address, uart_recv());
 
             /* poll on byte addressed targets */
@@ -131,7 +315,7 @@ static void cmdloop(void)
 
         /* Write program memory, high byte */
         case 'C':
-            led_mode = LED_FAST;
+            m_led_mode = LED_FAST;
             isp_mem_write(CMD_LOAD_FLASH_HI, m_address, uart_recv());
 
             /* poll on byte addressed targets */
@@ -146,7 +330,7 @@ static void cmdloop(void)
 
         /* Issue Page Write */
         case 'm':
-            led_mode = LED_FAST;
+            m_led_mode = LED_FAST;
             isp_mem_pagewrite();
             isp_mem_poll(&m_device);
             uart_send('\r');
@@ -160,7 +344,7 @@ static void cmdloop(void)
 
         /* Read program memory */
         case 'R':
-            led_mode = LED_SLOW;
+            m_led_mode = LED_SLOW;
             uart_send(isp_mem_read(CMD_READ_FLASH_HI, m_address));
             uart_send(isp_mem_read(CMD_READ_FLASH_LO, m_address));
             m_address++;
@@ -168,14 +352,14 @@ static void cmdloop(void)
 
         /* Read data memory */
         case 'd':
-            led_mode = LED_SLOW;
+            m_led_mode = LED_SLOW;
             uart_send(isp_mem_read(CMD_READ_EEPROM, m_address));
             m_address++;
             break;
 
         /* Write data memory */
         case 'D':
-            led_mode = LED_FAST;
+            m_led_mode = LED_FAST;
             isp_mem_write(CMD_WRITE_EEPROM, m_address, uart_recv());
             isp_mem_poll(&m_device);
 
@@ -215,7 +399,7 @@ static void cmdloop(void)
 
         /* Exit Bootloader */
         case 'E':
-            reset_statemachine(EV_PROG_LEAVE);
+            reset_statemachine_wait(EV_PROG_LEAVE);
             uart_send('\r');
             break;
 
@@ -270,13 +454,13 @@ static void cmdloop(void)
         /* Set LED */
         case 'x':
             uart_recv();
-            led_mode = LED_ON;
+            m_led_mode = LED_ON;
             break;
 
         /* Clear LED */
         case 'y':
             uart_recv();
-            led_mode = LED_OFF;
+            m_led_mode = LED_OFF;
             break;
 
         /* Report Block write Mode */
@@ -292,7 +476,7 @@ static void cmdloop(void)
             uint16_t size, i;
             uint8_t type;
 
-            led_mode = LED_FAST;
+            m_led_mode = LED_FAST;
 
             size = uart_recv() << 8;
             size |= uart_recv();
@@ -344,7 +528,7 @@ static void cmdloop(void)
             uint16_t size, i;
             uint8_t type;
 
-            led_mode = LED_SLOW;
+            m_led_mode = LED_SLOW;
 
             size = uart_recv() << 8;
             size |= uart_recv();
@@ -410,192 +594,48 @@ static void cmdloop(void)
 } /* cmdloop */
 
 
-static void reset_statemachine(uint8_t event)
-{
-    static uint8_t reset_retries;
-    static uint8_t reset_cause;
-
-    uint8_t state;
-    uint8_t oldstate;
-    uint16_t timer;
-
-    cli();
-    /* copy state, disable timer */
-    state = reset_state;
-    timer = reset_timer;
-    reset_timer = 0x0000;
-    sei();
-
-    do {
-        oldstate = state;
-
-        switch (state) {
-            case STATE_IDLE:
-                if (event == EV_STATE_ENTER) {
-                    led_mode = LED_OFF;
-                    timer = 0; /* stop timer */
-
-                    /* put device in RUN mode */
-                    spi_init(0);
-                    RESET_INACTIVE();
-
-                } else if ((event == EV_BUTTON_PRESSED) || (event == EV_PROG_ENTER)) {
-                    reset_retries = 5;
-                    reset_cause = event;
-
-                    /* enable SPI interface */
-                    spi_init(1);
-
-                    state = STATE_RESET_SYNC;
-                }
-                break;
-
-            case STATE_RESET_SYNC:
-                if (event == EV_STATE_ENTER) {
-                    led_mode = LED_ON;
-                    timer = 1; /* timeout 50ms */
-
-                    /* put device in ISP mode */
-                    RESET_ACTIVE();
-
-                } else if (event == EV_TIMEOUT) {
-                    memset(&m_device, 0x00, sizeof(avr_device_t));
-
-                    if (isp_enter_progmode())
-                    {
-                        isp_read_signature(m_device.sig);
-                        avrdevice_get_by_signature(&m_device, m_device.sig);
-
-                        state = STATE_RESET_PROGMODE;
-
-                    } else {
-                        state = STATE_RESET_RETRY;
-                    }
-                }
-                break;
-
-            case STATE_RESET_RETRY:
-                if (event == EV_STATE_ENTER) {
-                    led_mode = LED_OFF;
-                    timer = 5; /* timeout 50ms */
-
-                    /* put device in RUN mode */
-                    RESET_INACTIVE();
-
-                } else if (event == EV_TIMEOUT) {
-                    reset_retries--;
-                    if (reset_retries > 0) {
-                        /* try lower frequency */
-                        spi_set_clk(SPI_SET_CLK_DEC);
-
-                        state = STATE_RESET_SYNC;
-
-                    } else {
-                        /* got no sync */
-                        state = STATE_IDLE;
-                    }
-                }
-                break;
-
-            case STATE_RESET_PROGMODE:
-                if (event == EV_STATE_ENTER) {
-                    if (reset_cause == EV_BUTTON_PRESSED)
-                    {
-                        state = STATE_IDLE;
-                    }
-
-                } else if ((event == EV_PROG_LEAVE) ||
-                         (event == EV_BUTTON_PRESSED)
-                        )
-                {
-                    state = STATE_IDLE;
-                }
-                break;
-
-            default:
-                state = STATE_IDLE;
-                break;
-        }
-
-#if (USE_DISPLAY)
-        if ((m_state == STATE_IDLE) &&
-            ((oldstate == STATE_RESET_RETRY) ||
-             (oldstate == STATE_RESET_PROGMODE)
-            ))
-        {
-            if (m_device.name[0] != '\0')
-            {
-                display_show_string(m_device.name, 0);
-
-                if (m_device.flags & POLL_UNTESTED)
-                {
-                    display_show_string(" untested", 1);
-                }
-            }
-            else
-            {
-                display_show_string("unknown 0X", 0);
-                display_show_hex(m_device.sig[0], 1);
-                display_show_hex(m_device.sig[1], 1);
-                display_show_hex(m_device.sig[2], 1);
-            }
-
-            display_set_mode(DISPLAY_MODE_SCROLL_ONCE);
-        }
-#endif /* (USE_DISPLAY) */
-
-        event = (oldstate != state) ? EV_STATE_ENTER
-                                    : EV_NONE;
-
-    } while (oldstate != state);
-
-    cli();
-    /* copy state back */
-    reset_timer = timer;
-    reset_state = state;
-    sei();
-} /* reset_statemachine */
-
-
 /* time keeping */
 ISR(TIMER0_OVF_vect)
 {
-    uint8_t event = EV_NONE;
-
     /* restart timer */
     TCNT0 = TIMER_RELOAD;
 
     static uint8_t prev_pressed;
-    if (ISP_CHECK()) {
-        if (!prev_pressed) {
-            event = EV_BUTTON_PRESSED;
+    if (ISP_CHECK())
+    {
+        if (!prev_pressed)
+        {
+            m_events |= EV_BUTTON_PRESSED;
             prev_pressed = 1;
         }
-
-    } else {
-        if (prev_pressed) {
-            event = EV_BUTTON_RELEASED;
+    }
+    else
+    {
+        if (prev_pressed)
+        {
+            m_events |= EV_BUTTON_RELEASED;
             prev_pressed = 0;
         }
     }
 
-    if (reset_timer) {
-        reset_timer--;
-        if (reset_timer == 0) {
-            event = EV_TIMEOUT;
+    if (m_reset_timer)
+    {
+        m_reset_timer--;
+        if (m_reset_timer == 0)
+        {
+            m_events |= EV_TIMEOUT;
         }
-    }
-
-    if (event != EV_NONE) {
-        reset_statemachine(event);
     }
 
     /* update LED */
     static uint8_t led_timer;
 
-    if (led_mode & ((led_timer++ & 0xFF) | 0x80)) {
+    if (m_led_mode & ((led_timer++ & 0xFF) | 0x80))
+    {
         ISP_LED_ON();
-    } else {
+    }
+    else
+    {
         ISP_LED_OFF();
     }
 
