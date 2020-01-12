@@ -9,7 +9,6 @@
 #define POLL_7F         0x02    /* value 0x7F can not be polled from flash/eeprom */
 #define POLL_80         0x04    /* value 0x80 can not be polled from flash/eeprom */
 #define POLL_FF         0x08    /* value 0xFF can not be polled from flash/eeprom */
-#define POLL_UNTESTED   0x80    /* device not tested */
 
 typedef struct avr_device_s
 {

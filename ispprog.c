@@ -191,9 +191,7 @@ static void reset_statemachine(uint8_t events)
                 {
                     events &= ~(EV_STATE_ENTER);
 
-                    if ((m_device.flags & POLL_UNTESTED) ||
-                        (reset_cause == EV_BUTTON_PRESSED)
-                       )
+                    if (reset_cause == EV_BUTTON_PRESSED)
                     {
                         m_state = STATE_IDLE;
                     }
@@ -220,11 +218,6 @@ static void reset_statemachine(uint8_t events)
             if (m_device.name[0] != '\0')
             {
                 display_show_string(m_device.name, 0);
-
-                if (m_device.flags & POLL_UNTESTED)
-                {
-                    display_show_string(" untested", 1);
-                }
             }
             else
             {
