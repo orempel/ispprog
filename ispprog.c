@@ -28,6 +28,12 @@
 #include "target.h"
 #include "uart.h"
 
+#define TIMER_IRQFREQ_MS        10
+
+/* convert milliseconds to timer ticks */
+#define TIMER_MSEC2TICKS(x)     ((x * F_CPU) / (TIMER_DIVISOR * 1000ULL))
+#define TIMER_MSEC2IRQCNT(x)    (x / TIMER_IRQFREQ_MS)
+
 #define EV_NONE                 0x00
 #define EV_STATE_ENTER          0x01
 #define EV_BUTTON_PRESSED       0x02
@@ -95,7 +101,8 @@ static void reset_statemachine(uint8_t events)
                     /* remove all events */
                     events = EV_NONE;
 
-                    timer = 0; /* stop timer */
+                    /* stop timer */
+                    timer = TIMER_MSEC2IRQCNT(0);
 
                     spi_init(0);
 
@@ -122,7 +129,7 @@ static void reset_statemachine(uint8_t events)
                 {
                     events &= ~(EV_STATE_ENTER);
 
-                    timer = 1; /* timeout 10ms */
+                    timer = TIMER_MSEC2IRQCNT(10);
 
                     /* put device in ISP mode */
                     RESET_ACTIVE();
@@ -153,7 +160,7 @@ static void reset_statemachine(uint8_t events)
                 {
                     events &= ~(EV_STATE_ENTER);
 
-                    timer = 5; /* timeout 50ms */
+                    timer = TIMER_MSEC2IRQCNT(50);
 
                     /* put device in RUN mode */
                     RESET_INACTIVE();
@@ -598,7 +605,7 @@ static void cmdloop(void)
 ISR(TIMER0_OVF_vect)
 {
     /* restart timer */
-    TCNT0 = TIMER_RELOAD;
+    TCNT0 = 0xFF - TIMER_MSEC2TICKS(TIMER_IRQFREQ_MS);
 
     static uint8_t prev_pressed;
     if (ISP_CHECK())

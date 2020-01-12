@@ -8,9 +8,8 @@
  * Fuse H: 0xDA (512 words bootloader, jtag disabled)
  * Fuse L: 0xFF (ext. Crystal)
  */
-#define F_CPU           7372800
+#define F_CPU           7372800ULL
 #define BAUDRATE        115200
-#define TIMER_RELOAD    (0xFF - 72)    /* 10ms @7.3728MHz */
 
 #define ISP_RESET       PORTB1        /* to target */
 #define ISP_LED         PORTB3        /* low active */
@@ -36,6 +35,7 @@
 
 #define USE_DISPLAY     0
 
+#define TIMER_DIVISOR   1024
 #define TIMER_INIT()    {   /* timer0, FCPU/1024, overflow interrupt */ \
                             TCCR0 = (1<<CS02) | (1<<CS00); \
                             TIMSK = (1<<TOIE0); \
@@ -54,9 +54,8 @@
  * Fuse H: 0xDC (512 words bootloader)
  * Fuse L: 0xE2 (internal osc)
  */
-#define F_CPU           8000000
+#define F_CPU           8000000ULL
 #define BAUDRATE        115200
-#define TIMER_RELOAD    (0xFF - 78)     /* 10ms @8MHz */
 
 /* trim internal oscillator to get "good" baudrate */
 #define OSCCAL_VALUE    0x80
@@ -96,6 +95,7 @@
 #define DISP_D5         PORTD6
 #define DISP_D6         PORTD7
 
+#define TIMER_DIVISOR   1024
 #define TIMER_INIT()    {   /* timer0, FCPU/1024, overflow interrupt */ \
                             TCCR0B = (1<<CS02) | (1<<CS00); \
                             TIMSK0 = (1<<TOIE0); \
