@@ -1139,7 +1139,6 @@ void disable_wdt_timer(void)
 #endif /* defined(__AVR_ATmega328P__) */
 
 
-int main(void) __attribute__ ((noreturn));
 int main(void)
 {
     GPIO_INIT();
