@@ -67,6 +67,18 @@ uint8_t uart_rx_ready(void)
 
 
 /* ***********************************************************************
+ * uart_send_buf
+ * *********************************************************************** */
+void uart_send_buf(const uint8_t * p_data, uint16_t data_length)
+{
+    while (data_length--)
+    {
+        uart_send(*p_data++);
+    }
+} /* uart_send_buf */
+
+
+/* ***********************************************************************
  * uart_recv_buf
  * *********************************************************************** */
 void uart_recv_buf(uint8_t * p_data, uint16_t data_length)

@@ -23,7 +23,7 @@
 
 #if (USE_DISPLAY)
 static display_mode_t   m_mode = DISPLAY_MODE_OFF;
-static char             m_buffer[24];
+static char             m_buffer[32];
 static uint8_t          m_buffer_length = 0;
 static uint8_t          m_buffer_pos = 0;
 

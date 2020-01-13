@@ -26,7 +26,10 @@
 #include "display.h"
 #include "spi_isp.h"
 #include "target.h"
+#include "twi_master.h"
 #include "uart.h"
+
+#define MIN(a,b)                (((a) < (b)) ? (a) : (b))
 
 #define TIMER_IRQFREQ_MS        10
 
@@ -41,12 +44,14 @@
 #define EV_TIMEOUT              0x08
 #define EV_PROG_ENTER           0x10
 #define EV_PROG_LEAVE           0x20
+#define EV_PROG_ENTER_TWI       0x40
 
 #define STATE_IDLE              0x00    /* nothing */
 #define STATE_RESET_SYNC        0x01
 #define STATE_RESET_RETRY       0x02
 #define STATE_RESET_PROGMODE    0x03
-
+#define STATE_TWI_CHECK_BL      0x04
+#define STATE_TWI_PROGMODE      0x05
 
 #define LED_OFF                 0x00
 #define LED_SLOW                0x20
@@ -62,6 +67,11 @@ static uint8_t              m_state;
 static uint8_t              m_page_buf[256];
 static avr_device_t         m_device;
 static uint16_t             m_address = 0x0000;
+
+#if (USE_TWI_SUPPORT)
+static twi_chipinfo_t       m_twi_chipinfo;
+static uint8_t              m_twi_address;
+#endif /* (USE_TWI_SUPPORT) */
 
 
 static void reset_statemachine(uint8_t events)
@@ -105,12 +115,20 @@ static void reset_statemachine(uint8_t events)
                     timer = TIMER_MSEC2IRQCNT(0);
 
                     spi_init(0);
-
+#if (USE_TWI_SUPPORT)
+                    twi_init(0);
+#endif
                     /* put device in RUN mode */
                     RESET_INACTIVE();
                     m_led_mode = LED_OFF;
                 }
-                else if (events & (EV_BUTTON_PRESSED | EV_PROG_ENTER))
+                else if ((events & EV_PROG_ENTER) ||
+#if (USE_TWI_SUPPORT)
+                         ((events & EV_BUTTON_PRESSED) && (m_twi_address == 0x00))
+#else
+                         (events & EV_BUTTON_PRESSED)
+#endif /* (USE_TWI_SUPPORT) */
+                        )
                 {
                     reset_cause = events;
                     events &= ~(EV_BUTTON_PRESSED | EV_PROG_ENTER);
@@ -122,6 +140,29 @@ static void reset_statemachine(uint8_t events)
 
                     m_state = STATE_RESET_SYNC;
                 }
+#if (USE_TWI_SUPPORT)
+                else if ((events & EV_PROG_ENTER_TWI) ||
+                         ((events & EV_BUTTON_PRESSED) && (m_twi_address != 0x00))
+                        )
+                {
+                    uint8_t result;
+
+                    reset_cause = events;
+                    events &= ~(EV_BUTTON_PRESSED | EV_PROG_ENTER_TWI);
+
+                    reset_retries = 5;
+
+                    twi_init(1);
+                    result = twi_switch_application(m_twi_address, BOOTTYPE_BOOTLOADER);
+                    if (result == TWI_ERROR)
+                    {
+                        /* no response from target, do normal reset */
+                        RESET_ACTIVE();
+                    }
+
+                    m_state = STATE_TWI_CHECK_BL;
+                }
+#endif /* (USE_TWI_SUPPORT) */
                 break;
 
             case STATE_RESET_SYNC:
@@ -203,6 +244,101 @@ static void reset_statemachine(uint8_t events)
                     m_state = STATE_IDLE;
                 }
                 break;
+
+#if (USE_TWI_SUPPORT)
+            case STATE_TWI_CHECK_BL:
+                if (events & EV_STATE_ENTER)
+                {
+                    events &= ~(EV_STATE_ENTER);
+
+                    timer = TIMER_MSEC2IRQCNT(10);
+                }
+                else if (events & EV_TIMEOUT)
+                {
+                    uint8_t result;
+
+                    events &= ~(EV_TIMEOUT);
+
+                    /* put target in RUN mode */
+                    RESET_INACTIVE();
+                    m_led_mode = LED_ON;
+
+                    result = twi_read_chipinfo(m_twi_address, &m_twi_chipinfo);
+                    if (result == TWI_SUCCESS)
+                    {
+#if (USE_DISPLAY)
+                        char twi_version[16 +1];
+
+                        twi_read_version(m_twi_address, twi_version,
+                                         sizeof(twi_version) -1);
+                        twi_version[16] = '\0';
+
+                        display_show_string(twi_version, 0);
+
+                        avrdevice_get_by_signature(&m_device, m_twi_chipinfo.sig);
+                        if (m_device.name[0] != '\0')
+                        {
+                            display_show_string(" ", 1);
+                            display_show_string(m_device.name, 1);
+                        }
+                        else
+                        {
+                            display_show_string(" 0X", 1);
+                            display_show_hex(m_twi_chipinfo.sig[0], 1);
+                            display_show_hex(m_twi_chipinfo.sig[1], 1);
+                            display_show_hex(m_twi_chipinfo.sig[2], 1);
+                        }
+
+                        display_set_mode(DISPLAY_MODE_SCROLL_ONCE);
+#endif /* (USE_DISPLAY) */
+
+                        m_state = STATE_TWI_PROGMODE;
+                    }
+                    else
+                    {
+                        reset_retries--;
+                        if (reset_retries > 0)
+                        {
+                            timer = TIMER_MSEC2IRQCNT(10);
+                        }
+                        else
+                        {
+#if (USE_DISPLAY)
+                            display_show_string("0x", 0);
+                            display_show_hex(m_twi_address, 1);
+                            display_show_string(":NAK", 1);
+                            display_set_mode(DISPLAY_MODE_SCROLL_ONCE);
+#endif /* (USE_DISPLAY) */
+
+                            m_state = STATE_IDLE;
+                        }
+                    }
+                }
+                break;
+
+            case STATE_TWI_PROGMODE:
+                if (events & EV_STATE_ENTER)
+                {
+                    events &= ~(EV_STATE_ENTER);
+
+                    if (reset_cause == EV_BUTTON_PRESSED)
+                    {
+                        m_state = STATE_IDLE;
+                    }
+                }
+                else if (events & EV_PROG_LEAVE)
+                {
+                    events &= ~(EV_PROG_LEAVE);
+
+                    m_state = STATE_IDLE;
+                }
+
+                if (m_state == STATE_IDLE)
+                {
+                    twi_switch_application(m_twi_address, BOOTTYPE_APPLICATION);
+                }
+                break;
+#endif /* (USE_TWI_SUPPORT) */
 
             default:
                 m_state = STATE_IDLE;
@@ -380,6 +516,7 @@ static void cmd_handler_isp(uint8_t cmd)
             size |= uart_recv();
             type = uart_recv();
 
+            size = MIN(size, sizeof(m_page_buf));
             uart_recv_buf(m_page_buf, size);
 
             if (type == 'F')
@@ -485,6 +622,124 @@ static void cmd_handler_isp(uint8_t cmd)
             break;
     }
 } /* cmd_handler_isp */
+
+
+#if (USE_TWI_SUPPORT)
+static void cmd_handler_twi(uint8_t cmd)
+{
+    switch (cmd)
+    {
+        /* Enter programming mode */
+        case 'P':
+            reset_statemachine_wait(EV_PROG_ENTER_TWI);
+            uart_send((m_state == STATE_TWI_PROGMODE) ? '\r' : '!');
+            break;
+
+         /* Chip erase */
+        case 'e':
+            uart_send('\r');
+            break;
+
+        /* Read signature bytes */
+        case 's':
+            uart_send(m_twi_chipinfo.sig[2]);
+            uart_send(m_twi_chipinfo.sig[1]);
+            uart_send(m_twi_chipinfo.sig[0]);
+            break;
+
+        /* Block Write */
+        case 'B':
+        {
+            uint16_t write_pos = 0;
+            uint16_t size;
+            uint8_t type;
+
+            m_led_mode = LED_FAST;
+
+            size = uart_recv() << 8;
+            size |= uart_recv();
+            type = uart_recv();
+
+            size = MIN(size, sizeof(m_page_buf));
+            uart_recv_buf(m_page_buf, size);
+
+            memset(m_page_buf + size, 0xFF, sizeof(m_page_buf) - size);
+
+            while (write_pos < size)
+            {
+                if (type == 'F')
+                {
+                    twi_write_memory(m_twi_address, MEMTYPE_FLASH,
+                                    (m_address << 1),
+                                    m_page_buf + write_pos,
+                                    m_twi_chipinfo.page_size);
+
+                    /* when accessing flash, m_address is a word address */
+                    m_address += (m_twi_chipinfo.page_size >> 1);
+                    write_pos += m_twi_chipinfo.page_size;
+                }
+                else
+                {
+                    uint8_t write_size;
+
+                    write_size = MIN(size, m_twi_chipinfo.page_size);
+
+                    twi_write_memory(m_twi_address, MEMTYPE_EEPROM,
+                                    m_address,
+                                    m_page_buf + write_pos,
+                                    write_size);
+
+                    /* when accessing eeprom, m_address is a byte address */
+                    m_address += write_size;
+                    write_pos += write_size;
+                }
+            }
+
+            uart_send('\r');
+            break;
+        }
+
+        /* Block Read */
+        case 'g':
+        {
+            uint16_t size;
+            uint8_t type;
+
+            m_led_mode = LED_SLOW;
+
+            size = uart_recv() << 8;
+            size |= uart_recv();
+            type = uart_recv();
+
+            size = MIN(size, sizeof(m_page_buf));
+
+            if (type == 'F')
+            {
+                twi_read_memory(m_twi_address, MEMTYPE_FLASH,
+                                (m_address << 1),
+                                m_page_buf, size);
+
+                m_address += (size >> 1);
+            }
+            else
+            {
+                twi_read_memory(m_twi_address, MEMTYPE_EEPROM,
+                                m_address,
+                                m_page_buf, size);
+
+                m_address += size;
+            }
+
+            uart_send_buf(m_page_buf, size);
+            break;
+        }
+
+        default:
+            uart_send('?');
+            break;
+    }
+} /* cmd_handler_twi */
+#endif /* (USE_TWI_SUPPORT) */
 
 
 static void cmdloop(void) __attribute__ ((noreturn));
@@ -596,12 +851,67 @@ static void cmdloop(void)
                 uart_send(sizeof(m_page_buf) & 0xFF);
                 break;
 
+#if (USE_TWI_SUPPORT)
+            case 'I':
+                m_twi_address = uart_recv() & 0x7F;
+
+                if (m_twi_address != 0x00)
+                {
+                    reset_statemachine_wait(EV_PROG_ENTER_TWI);
+                    if (m_state == STATE_TWI_PROGMODE)
+                    {
+                        uart_send('\r');
+                    }
+                    else
+                    {
+                        m_twi_address = 0x00;
+                        uart_send('!');
+                    }
+                }
+                else
+                {
+                    uart_send('\r');
+                }
+                break;
+
+            case 'i':
+            {
+                uint8_t twi_addr;
+                uint8_t write_size;
+                uint8_t read_size;
+                uint8_t result;
+
+                twi_addr = uart_recv();
+                write_size = uart_recv();
+                read_size = uart_recv();
+
+                uart_recv_buf(m_page_buf, write_size);
+
+                result = twi_generic(twi_addr,
+                                     m_page_buf, write_size,
+                                     m_page_buf, read_size);
+
+                uart_send_buf(m_page_buf, read_size);
+
+                uart_send((result == TWI_SUCCESS) ? '\r' : '!');
+            }
+#endif /* (USE_TWI_SUPPORT) */
+
             /* ESC */
             case 0x1B:
                 break;
 
             default:
-                cmd_handler_isp(cmd);
+#if (USE_TWI_SUPPORT)
+                if (m_twi_address != 0x00)
+                {
+                    cmd_handler_twi(cmd);
+                }
+                else
+#endif /* (USE_TWI_SUPPORT) */
+                {
+                    cmd_handler_isp(cmd);
+                }
                 break;
         }
     }
@@ -682,6 +992,10 @@ int main(void)
     uart_init();
 
     spi_init(0);
+
+#if (USE_TWI_SUPPORT)
+    twi_init(0);
+#endif
 
     TIMER_INIT();
 

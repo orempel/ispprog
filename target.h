@@ -34,6 +34,7 @@
 #define ISP_CHECK()     (PIND & (1<<RESET_IN))
 
 #define USE_DISPLAY     0
+#define USE_TWI_SUPPORT 0
 
 #define TIMER_DIVISOR   1024
 #define TIMER_INIT()    {   /* timer0, FCPU/1024, overflow interrupt */ \
@@ -94,6 +95,8 @@
 #define DISP_D4         PORTD5
 #define DISP_D5         PORTD6
 #define DISP_D6         PORTD7
+
+#define USE_TWI_SUPPORT 1
 
 #define TIMER_DIVISOR   1024
 #define TIMER_INIT()    {   /* timer0, FCPU/1024, overflow interrupt */ \
