@@ -25,6 +25,8 @@
 
 #define TWI_SUCCESS             0x00
 #define TWI_ERROR               0x01
+#define TWI_NACK_ADDR           0x02
+#define TWI_NACK_DATA           0x03
 
 typedef struct twi_chipinfo_s
 {

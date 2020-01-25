@@ -154,7 +154,7 @@ static void reset_statemachine(uint8_t events)
 
                     twi_init(1);
                     result = twi_switch_application(m_twi_address, BOOTTYPE_BOOTLOADER);
-                    if (result == TWI_ERROR)
+                    if (result == TWI_NACK_ADDR)
                     {
                         /* no response from target, do normal reset */
                         RESET_ACTIVE();
@@ -641,6 +641,7 @@ static void cmd_handler_twi(uint8_t cmd)
             uint16_t write_pos = 0;
             uint16_t size;
             uint8_t type;
+            uint8_t result = TWI_SUCCESS;
 
             m_led_mode = LED_FAST;
 
@@ -653,14 +654,16 @@ static void cmd_handler_twi(uint8_t cmd)
 
             memset(m_page_buf + size, 0xFF, sizeof(m_page_buf) - size);
 
-            while (write_pos < size)
+            while ((write_pos < size) &&
+                   (result == TWI_SUCCESS)
+                  )
             {
                 if (type == 'F')
                 {
-                    twi_write_memory(m_twi_address, MEMTYPE_FLASH,
-                                    (m_address << 1),
-                                    m_page_buf + write_pos,
-                                    m_twi_chipinfo.page_size);
+                    result = twi_write_memory(m_twi_address, MEMTYPE_FLASH,
+                                              (m_address << 1),
+                                              m_page_buf + write_pos,
+                                              m_twi_chipinfo.page_size);
 
                     /* when accessing flash, m_address is a word address */
                     m_address += (m_twi_chipinfo.page_size >> 1);
@@ -670,12 +673,13 @@ static void cmd_handler_twi(uint8_t cmd)
                 {
                     uint8_t write_size;
 
-                    write_size = MIN(size, m_twi_chipinfo.page_size);
+                    /* one eeprom byte takes 3.5ms to programm */
+                    write_size = MIN(size, 4);
 
-                    twi_write_memory(m_twi_address, MEMTYPE_EEPROM,
-                                    m_address,
-                                    m_page_buf + write_pos,
-                                    write_size);
+                    result = twi_write_memory(m_twi_address, MEMTYPE_EEPROM,
+                                              m_address,
+                                              m_page_buf + write_pos,
+                                              write_size);
 
                     /* when accessing eeprom, m_address is a byte address */
                     m_address += write_size;
@@ -683,7 +687,7 @@ static void cmd_handler_twi(uint8_t cmd)
                 }
             }
 
-            uart_send('\r');
+            uart_send((result == TWI_SUCCESS) ? '\r' : '!');
             break;
         }
 
@@ -890,6 +894,7 @@ static void cmdloop(void)
                 uart_send_buf(m_page_buf, read_size);
 
                 uart_send((result == TWI_SUCCESS) ? '\r' : '!');
+                break;
             }
 #endif /* (USE_TWI_SUPPORT) */
 

@@ -22,6 +22,8 @@
 #include "target.h"
 #include "twi_master.h"
 
+#include <util/delay.h>
+
 #if (USE_TWI_SUPPORT)
 
 #define TWI_SLA_W(addr)         (addr << 1)
@@ -73,6 +75,13 @@ static uint8_t twi_master_tx(uint8_t value)
         case 0x40:  /* SLA+R transmitted, ACK received */
             return TWI_SUCCESS;
 
+        case 0x20:  /* SLA+W transmitted, NACK received */
+        case 0x48:  /* SLA+R transmitted, NACK received */
+            return TWI_NACK_ADDR;
+
+        case 0x30:  /* Data transmitted, NACK received */
+            return TWI_NACK_DATA;
+
         default:
             return TWI_ERROR;
     }
@@ -105,17 +114,78 @@ static uint8_t twi_master_rx(uint8_t * p_value, uint8_t ack)
  * *********************************************************************** */
 static uint8_t twi_master_start(uint8_t twi_addr)
 {
-    if (twi_start() == TWI_SUCCESS)
+    uint8_t result = TWI_NACK_ADDR;
+    uint8_t retry = 10;
+
+    while ((result == TWI_NACK_ADDR) && (retry--))
     {
-        if (twi_master_tx(twi_addr) == TWI_SUCCESS)
+        result = twi_start();
+        if (result == TWI_SUCCESS)
         {
-            return TWI_SUCCESS;
+            result = twi_master_tx(twi_addr);
+            if (result == TWI_SUCCESS)
+            {
+                return result;
+            }
+        }
+
+        twi_stop();
+        _delay_ms(2);
+    }
+
+    return result;
+} /* twi_master_start */
+
+
+/* ***********************************************************************
+ * twi_master_tx_buf
+ * *********************************************************************** */
+static uint8_t twi_master_tx_buf(const uint8_t * p_data, uint16_t data_size)
+{
+    uint8_t result = TWI_ERROR;
+
+    while (data_size--)
+    {
+        result = twi_master_tx(*p_data++);
+        if (result != TWI_SUCCESS)
+        {
+            /* NACK for the last transmitted byte is OK */
+            if ((result == TWI_NACK_DATA) && (data_size == 0))
+            {
+                result = TWI_SUCCESS;
+            }
+            else
+            {
+                break;
+            }
         }
     }
 
-    twi_stop();
-    return TWI_ERROR;
-} /* twi_master_start */
+    return result;
+} /* twi_master_tx_buf */
+
+
+/* ***********************************************************************
+ * twi_master_rx_buf
+ * *********************************************************************** */
+static uint8_t twi_master_rx_buf(uint8_t * p_data, uint16_t data_size)
+{
+    uint8_t result = TWI_ERROR;
+
+    while (data_size--)
+    {
+        uint8_t ack;
+
+        ack = (data_size > 0);
+        result = twi_master_rx(p_data++, ack);
+        if (result != TWI_SUCCESS)
+        {
+            break;
+        }
+    }
+
+    return result;
+} /* twi_master_rx_buf */
 
 
 /* ***********************************************************************
@@ -132,16 +202,7 @@ uint8_t twi_generic(uint8_t twi_addr,
         result = twi_master_start(TWI_SLA_W(twi_addr));
         if (result == TWI_SUCCESS)
         {
-            uint16_t i;
-
-            for (i = 0; i < write_size; i++)
-            {
-                result = twi_master_tx(*p_wr_data++);
-                if (result != TWI_SUCCESS)
-                {
-                    break;
-                }
-            }
+            result = twi_master_tx_buf(p_wr_data, write_size);
         }
     }
 
@@ -152,19 +213,7 @@ uint8_t twi_generic(uint8_t twi_addr,
         result = twi_master_start(TWI_SLA_R(twi_addr));
         if (result == TWI_SUCCESS)
         {
-            uint16_t i;
-
-            for (i = 0; i < read_size; i++)
-            {
-                uint8_t ack;
-
-                ack = (i != (read_size -1));
-                result = twi_master_rx(p_rd_data++, ack);
-                if (result != TWI_SUCCESS)
-                {
-                    break;
-                }
-            }
+            result = twi_master_rx_buf(p_rd_data, read_size);
         }
     }
 
@@ -237,30 +286,12 @@ uint8_t twi_write_memory(uint8_t twi_addr, uint8_t memory_type, uint16_t memory_
     result = twi_master_start(TWI_SLA_W(twi_addr));
     if (result == TWI_SUCCESS)
     {
-        uint16_t i;
-
-        for (i = 0; i < sizeof(cmd); i++)
-        {
-            result = twi_master_tx(cmd[i]);
-            if (result != TWI_SUCCESS)
-            {
-                break;
-            }
-        }
+        result = twi_master_tx_buf(cmd, sizeof(cmd));
     }
 
     if (result == TWI_SUCCESS)
     {
-        uint16_t i;
-
-        for (i = 0; i < data_length; i++)
-        {
-            result = twi_master_tx(*p_data++);
-            if (result != TWI_SUCCESS)
-            {
-                break;
-            }
-        }
+        result = twi_master_tx_buf(p_data, data_length);
     }
 
     twi_stop();
