@@ -396,12 +396,6 @@ static void cmd_handler_isp(uint8_t cmd)
 {
     switch (cmd)
     {
-        /* Enter programming mode */
-        case 'P':
-            reset_statemachine_wait(EV_PROG_ENTER);
-            uart_send((m_state == STATE_RESET_PROGMODE) ? '\r' : '!');
-            break;
-
         /* Write program memory, low byte */
         case 'c':
             m_led_mode = LED_FAST;
@@ -629,12 +623,6 @@ static void cmd_handler_twi(uint8_t cmd)
 {
     switch (cmd)
     {
-        /* Enter programming mode */
-        case 'P':
-            reset_statemachine_wait(EV_PROG_ENTER_TWI);
-            uart_send((m_state == STATE_TWI_PROGMODE) ? '\r' : '!');
-            break;
-
          /* Chip erase */
         case 'e':
             uart_send('\r');
@@ -771,6 +759,15 @@ static void cmdloop(void)
         cmd = uart_recv();
         switch (cmd)
         {
+            /* Enter programming mode */
+            case 'P':
+                reset_statemachine_wait(EV_PROG_ENTER);
+                uart_send((m_state == STATE_RESET_PROGMODE) ? '\r' : '!');
+#if (USE_TWI_SUPPORT)
+                m_twi_address = 0x00;
+#endif
+                break;
+
             /* Autoincrement address */
             case 'a':
                 uart_send('Y');
@@ -864,7 +861,6 @@ static void cmdloop(void)
                     }
                     else
                     {
-                        m_twi_address = 0x00;
                         uart_send('!');
                     }
                 }
